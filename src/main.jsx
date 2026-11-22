@@ -73,10 +73,33 @@ function App(){
   const [trial,setTrial]=useState(null);
   const [mapOpen,setMapOpen]=useState(false);
   const [phoneMenu,setPhoneMenu]=useState(false);
+  const [portraitPhone,setPortraitPhone]=useState(()=>window.matchMedia('(pointer: coarse) and (orientation: portrait)').matches);
   const [islandPickerOpen,setIslandPickerOpen]=useState(false);
   const [fullscreen,setFullscreen]=useState(false);
 
+  useEffect(()=>{
+    const query=window.matchMedia('(pointer: coarse) and (orientation: portrait)');
+    const update=()=>setPortraitPhone(query.matches);
+    query.addEventListener?.('change',update);
+    window.addEventListener('orientationchange',update);
+    window.addEventListener('resize',update);
+    return ()=>{
+      query.removeEventListener?.('change',update);
+      window.removeEventListener('orientationchange',update);
+      window.removeEventListener('resize',update);
+    };
+  },[]);
+
   function beginDrive(){
+    const enterLandscape=async()=>{
+      try{
+        if(!document.fullscreenElement&&document.documentElement.requestFullscreen){
+          await document.documentElement.requestFullscreen({navigationUI:'hide'});
+        }
+        await screen.orientation?.lock?.('landscape');
+      }catch{}
+    };
+    if(window.matchMedia('(pointer: coarse)').matches)enterLandscape();
     held.current.clear();
     started.current=true;
     traffic.current=createTraffic();
@@ -438,6 +461,9 @@ function App(){
       <button className="start intro-start" onClick={beginDrive}><Icon name="wheel" size={20}/> Start driving</button>
       <span className="intro-shortcut">Press <kbd>Space</kbd></span>
     </section>}
+    {driving&&portraitPhone&&<div className="rotate-prompt" role="status" aria-live="assertive">
+      <div><span className="rotate-icon" aria-hidden="true">↻</span><h2>Rotate your phone</h2><p>Coastline Chase is best played in landscape.</p></div>
+    </div>}
     {driving&&<>
     <div id="phone-game-menu" className="phone-game-menu" data-view={phoneMenu?'modes':'drive'}>
     {phoneMenu&&<header className="phone-menu-header">
