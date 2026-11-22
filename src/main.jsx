@@ -421,6 +421,15 @@ function App(){
       <div className="brand">
         <img className="mark" src={`${import.meta.env.BASE_URL}coastline-192.png`} alt="" width="46" height="46"/>
         <div><h1>Coastline Chase<span>.io</span></h1></div>
+        {trial?.directions.length>0&&<div className="checkpoint-directions panel" aria-label="Checkpoint directions">
+          {trial.directions.map(({number,angle})=><div className="checkpoint-direction" key={number}
+            aria-label={`Checkpoint ${number}, ${['ahead','ahead right','right','behind right','behind','behind left','left','ahead left'][(Math.round(angle/(Math.PI/4))+8)%8]}`}>
+            <svg viewBox="0 0 24 24" width="20" height="20" style={{transform:`rotate(${angle}rad)`}} aria-hidden="true">
+              <path d="M12 2 21 20l-9-4-9 4Z" fill="currentColor"/>
+            </svg>
+            <span>{number}</span>
+          </div>)}
+        </div>}
       </div>
       {driving&&<button className="square phone-menu-button" type="button"
         aria-expanded={phoneMenu} aria-controls="phone-game-menu"
@@ -518,15 +527,6 @@ function App(){
     <div className="touch" aria-label="Touch controls"><div>{touch('left','Left')}{touch('right','Right')}</div><div>{touch('brakeReverse','Brake or hold to reverse')}{touch('up','Accelerate')}</div></div>
     </div>
     <div className="compass" aria-label={`Heading ${heading}`}><span/> <b>{heading}</b> <span/></div>
-    {trial?.directions.length>0&&<div className="checkpoint-directions panel" aria-label="Checkpoint directions">
-      {trial.directions.map(({number,angle})=><div className="checkpoint-direction" key={number}
-        aria-label={`Checkpoint ${number}, ${['ahead','ahead right','right','behind right','behind','behind left','left','ahead left'][(Math.round(angle/(Math.PI/4))+8)%8]}`}>
-        <svg viewBox="0 0 24 24" width="20" height="20" style={{transform:`rotate(${angle}rad)`}} aria-hidden="true">
-          <path d="M12 2 21 20l-9-4-9 4Z" fill="currentColor"/>
-        </svg>
-        <span>{number}</span>
-      </div>)}
-    </div>}
     <footer className="bottom">
       <section className="speed panel" aria-label="Speedometer">
         <div className="readout"><b>{String(stats.speed).padStart(3,'0')}</b><span>KM/H</span></div>

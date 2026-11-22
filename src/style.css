@@ -137,10 +137,13 @@ kbd{background:#e7f0dc13;border:1px solid #e7f0dc2a;border-radius:4px;padding:2p
   .shell:has(.phone-game-menu[data-view=modes])>.top,
   .shell:has(.phone-game-menu[data-view=modes])>.bottom,
   .shell:has(.phone-game-menu[data-view=modes])>.compass,
-  .shell:has(.phone-game-menu[data-view=modes])>.checkpoint-directions{visibility:hidden}
+  .shell:has(.phone-game-menu[data-view=modes]) .checkpoint-directions{visibility:hidden}
   .phone-game-menu[data-view=modes] .mission{position:static;flex:1;min-height:0;max-height:none;width:100%;margin:0;overflow:auto;overscroll-behavior-y:contain;touch-action:pan-y;display:flex;flex-direction:column;align-items:center;padding:12px max(15px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(15px,env(safe-area-inset-left))}
   .phone-game-menu[data-view=modes] .mode-card{flex:none;width:min(100%,440px)}
   .phone-menu-button{position:absolute;left:0;top:53px;height:34px}
+  .brand{display:grid;grid-template-columns:46px max-content;grid-template-rows:auto auto;align-items:center;column-gap:12px;row-gap:4px}
+  .brand .checkpoint-directions{position:static;grid-column:2;top:auto;left:auto;bottom:auto;transform:none;justify-self:start;gap:4px;padding:4px 7px}
+  .brand .checkpoint-direction{min-width:clamp(25px,5vw,34px);font-size:10px}
   .compass{display:none}
   .shell:has(.phone-game-menu[data-view=modes])>.overlay{z-index:3}
   .phone-game-menu[data-view=modes] .touch{display:none}
@@ -149,8 +152,6 @@ kbd{background:#e7f0dc13;border:1px solid #e7f0dc2a;border-radius:4px;padding:2p
   .touch button{touch-action:none;background:#172824ed;border:1px solid var(--border);font-size:12px;font-weight:700;border-radius:8px;padding:8px 5px;min-width:43px;min-height:44px}
   .touch button:active{background:var(--orange);color:#172824}
   .bottom{bottom:max(79px,calc(env(safe-area-inset-bottom) + 67px))}
-  .checkpoint-directions{top:clamp(94px,17vh,116px);bottom:auto;gap:4px;padding:4px 7px}
-  .checkpoint-direction{min-width:clamp(25px,5vw,34px);font-size:10px}
   .overlay{z-index:2}
 }
 @media(max-width:345px){.brand h1{font-size:23px}}
