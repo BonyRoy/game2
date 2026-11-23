@@ -1,14 +1,15 @@
-import {isLand,isRoad,routes,vehicleHitsBuilding} from './world.js';
+import {isLand,isRoad,routeWaypoints,vehicleHitsBuilding} from './world.js';
+import {roundRoad} from './road-curves.js';
 import {separation} from './pursuit.js';
 
 const paths=[
-  [...routes[1].slice(1,12),[1770,1550]],
-  [[1770,2390],[1770,2820],[1770,3490],...routes[7].slice(1,4),
-    ...routes[8].slice(0,-1).reverse(),[2540,2390],[1770,2390]],
-  routes[10].slice(2),
+  [...routeWaypoints[1].slice(1,12),[1770,1550]],
+  [[1770,2390],[1770,2820],[1770,3490],...routeWaypoints[7].slice(1,4),
+    ...routeWaypoints[8].slice(0,-1).reverse(),[2540,2390],[1770,2390]],
+  routeWaypoints[10].slice(2),
   [[6800,3620],[7350,3620],[7990,3620],[7990,3050],[7350,3050],[6800,3050],[6800,3620]],
-  [...routes[18].slice(2,9),...routes[19].slice(0,-1).reverse()],
-  [[5050,7000],[5050,7420],...routes[21].slice(3),[6220,6710],[5650,6880],[5050,7000]],
+  [...routeWaypoints[18].slice(2,9),...routeWaypoints[19].slice(0,-1).reverse()],
+  [[5050,7000],[5050,7420],...routeWaypoints[21].slice(3),[6220,6710],[5650,6880],[5050,7000]],
   [[3800,4770],[3800,5050],[3800,6060],[3800,6410],[4060,6760],[4430,6970],
     [5050,7000],[5650,6880],[6220,6710],[6810,6670],[7300,6390],[7300,6060],
     [7300,4980],[7300,4750],[7350,4540],[7530,4240],[6800,4140],[6560,4300],
@@ -45,7 +46,7 @@ function lanePose(loop,position,direction,laneOffset=16){
 export function createTraffic(){
   const cars=[];
   for(const [routeIndex,path] of paths.entries()){
-    const loop=makeLoop(path);
+    const loop=makeLoop(roundRoad(path,true));
     const count=[6,3,5,4,4,3,5][routeIndex];
     for(let i=0;i<count;i++){
       const direction=i%2===0?1:-1;

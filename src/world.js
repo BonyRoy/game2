@@ -1,3 +1,4 @@
+import {roundRoad} from './road-curves.js';
 import {CARS} from './cars.js';
 export const SIZE = 5200;
 export const CAR_TOP_SPEED=244;
@@ -43,7 +44,7 @@ export const ISLAND_STARTS={
   snow:{x:5050,y:7220,angle:-Math.PI/2}
 };
 
-export const routes = [
+export const routeWaypoints = [
   [[1770,3490],[1770,3100],[1770,2390],[1770,1550],[1770,1120],[1620,830],[1410,540],[1410,130]],
   [[650,1550],[1770,1550],[1940,1510],[2230,1260],[2470,1290],[2650,1480],[2710,1720],[2680,1920],[2710,2110],[2670,2300],[2540,2390],[1770,2390],[1020,2390],[810,2540],[690,2900]],
   [[1770,1120],[1660,1100],[1200,1100],[950,980],[780,810],[410,810]],
@@ -67,31 +68,57 @@ export const routes = [
   [[5050,7000],[5050,7420],[5050,7810]],
   [[3760,7860],[4220,7520],[5050,7420],[5750,7420],[6410,7240],[6810,6670]],
   [[7010,7770],[6830,8100],[6680,8240]],
-  [[2210,4090],[2210,4660],[2460,4830],[3010,4830],[3050,4400]],
+  [[2210,4090],[2210,4660],[2460,4830],[2590,4830],[3010,4830],[3050,4400]],
+  [[2590,4830],[2590,4750]],
+  [[7080,3620],[7080,3548]],
+  [[5350,6940],[5350,7010]],
 ];
+export const routes=routeWaypoints.map(route=>roundRoad(route));
 export const roadWidth = 68;
+export const sidewalkWidth = roadWidth+11;
 let seed = 7141;
 const random = () => ((seed = (Math.imul(seed,1664525) + 1013904223) >>> 0) / 4294967296);
 const clamp = (value,min,max) => Math.max(min,Math.min(max,value));
 export const shore = y => 3080 + Math.sin(y/355)*106 + Math.sin(y/132)*27 - y*.047 + 2010*smooth((y-2250)/1550);
-const distanceTo = (x,y,a,b) => {
+const squaredDistanceTo = (x,y,a,b) => {
   const dx=b[0]-a[0], dy=b[1]-a[1];
   const t=clamp(((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy),0,1);
-  return Math.hypot(x-a[0]-dx*t,y-a[1]-dy*t);
+  return (x-a[0]-dx*t)**2+(y-a[1]-dy*t)**2;
 };
 const segments=routes.flatMap(route=>route.slice(1).map((point,i)=>[route[i],point]));
-const nearRoad = (x,y,radius) => segments.some(([a,b])=>distanceTo(x,y,a,b)<radius);
+const nearRoad = (x,y,radius) => segments.some(([a,b])=>squaredDistanceTo(x,y,a,b)<radius*radius);
+export const overlapsSidewalk = (x,y,radius) => nearRoad(x,y,sidewalkWidth/2+radius);
 const smooth = value => {
   const t=clamp(value,0,1);
   return t*t*(3-2*t);
 };
-export const airfield={x:2530,y:4520,w:90,d:550};
-const lighthouse={x:4710,y:4080,name:'Cape Beacon',kind:'lighthouse',w:22,d:22};
-const hangar={x:2420,y:4380,w:69,d:55};
-export {lighthouse,hangar};
+export const stadiums=[
+  {x:2590,y:4550,name:'Metasiberia Stadium'},
+  {x:7080,y:3350,name:'Copper Stadium'},
+  {x:5350,y:7210,name:'Frostpine Stadium'}
+].map(site=>({...site,w:400,d:287,h:43,kind:'stadium'}));
+export const stadium=stadiums[0];
+export const lighthouse={x:4710,y:4080,name:'Cape Beacon',kind:'lighthouse',w:22,d:22};
 
-function runwayDistance(x,y){
-  return Math.max(Math.abs(x-airfield.x)-airfield.w/2,Math.abs(y-airfield.y)-airfield.d/2);
+export function stadiumDriveLayout(bounds=stadium){
+  const fieldWidth=bounds.w*105/138.14,fieldDepth=bounds.d*68/98;
+  const gateWidth=Math.min(bounds.w*10/138.14,bounds.d*10/98);
+  const {x,y,w,d}=bounds;
+  const boxes=[];
+  // Each stand is split down its middle to leave a straight lane from the gate to the pitch.
+  for(const side of [-1,1])for(const end of [-1,1]){
+    boxes.push(
+      {x:x+side*(w+fieldWidth)/4,y:y+end*(d+gateWidth)/4,w:(w-fieldWidth)/2,d:(d-gateWidth)/2},
+      {x:x+side*(fieldWidth+gateWidth)/4,y:y+end*(d+fieldDepth)/4,w:(fieldWidth-gateWidth)/2,d:(d-fieldDepth)/2}
+    );
+  }
+  return {bounds,boxes,fieldWidth,fieldDepth,gateWidth};
+}
+
+const basicStadiumLayouts=new Map(stadiums.map(site=>[site,stadiumDriveLayout(site)]));
+
+export function stadiumDistance(x,y){
+  return Math.min(...stadiums.map(site=>Math.max(Math.abs(x-site.x)-site.w/2,Math.abs(y-site.y)-site.d/2)));
 }
 
 export function bridgeHeight(x,span){
@@ -104,13 +131,15 @@ export function groundHeight(x,y){
   const snow=isSnow(x,y);
   const desert=isDesert(x,y);
   if(!snow&&!desert&&(y>SIZE||x>shore(y)-42))return 0;
-  let distance=Infinity;
-  for(const [a,b] of segments)distance=Math.min(distance,distanceTo(x,y,a,b));
+  let square=Infinity;
+  for(const [a,b] of segments)square=Math.min(square,squaredDistanceTo(x,y,a,b));
+  const distance=Math.sqrt(square);
+  const stadiumGrade=smooth((stadiumDistance(x,y)-3)/75);
   if(snow){
     const edge=snowHalfWidth(y)-Math.abs(x-5500);
     const hills=10+9*Math.sin(x*.015+y*.011)+6*Math.cos(y*.024-x*.008);
     const summit=150*Math.exp(-(((x-6260)/345)**4+((y-7590)/240)**4));
-    return (Math.max(0,hills)+summit)*smooth((distance-68)/105)*smooth(edge/130);
+    return (Math.max(0,hills)+summit)*smooth((distance-68)/105)*smooth(edge/130)*stadiumGrade;
   }
   if(desert){
     const coast=desertHalfWidth(y)-Math.abs(x-8000);
@@ -118,11 +147,11 @@ export function groundHeight(x,y){
     const mesa=105*Math.exp(-(((x-8920)/250)**4+((y-1980)/230)**4));
     const approach=1-smooth((190-Math.abs(y-bridge.y))/125)
       *(1-smooth((x-bridge.east-40)/130));
-    return (Math.max(0,dunes)+mesa)*smooth((distance-64)/110)*smooth(coast/130)*approach;
+    return (Math.max(0,dunes)+mesa)*smooth((distance-64)/110)*smooth(coast/130)*approach*stadiumGrade;
   }
   const height=12+6*Math.sin(x*.008+y*.004)+5*Math.cos(y*.015-x*.006)
     +3*Math.sin(x*.034+y*.024)+2*Math.cos(x*.057-y*.023);
-  return Math.max(0,height)*smooth((distance-63)/113)*smooth((shore(y)-42-x)/125)*smooth((runwayDistance(x,y)-34)/78);
+  return Math.max(0,height)*smooth((distance-63)/113)*smooth((shore(y)-42-x)/125)*stadiumGrade;
 }
 const landmarks = [
   {x:1570,y:1350,name:'JUNIPER',kind:'town'},
@@ -130,7 +159,7 @@ const landmarks = [
   {x:2460,y:2580,name:'SOUTH BEACH'},
   {x:1110,y:2210,name:'MARINA'},
   {x:750,y:3800,name:'Pine Hollow',kind:'forest'},
-  {x:airfield.x,y:airfield.y,name:'South Airfield',kind:'airfield'},
+  ...stadiums,
   lighthouse,
   {x:7350,y:3620,name:'Copper City',kind:'desert'},
   {x:8910,y:1940,name:'Red Mesa',kind:'desert'},
@@ -153,6 +182,85 @@ for(const [x, rows] of [[1697,[1660,1738,1816,1894,2050,2128,2206,2284]], [1842,
     const h={retail:14,stucco:44,brick:57,glass:81}[style]+(style==='retail'?0:i%3*9);
     buildingCandidates.push({x,y,w:style==='retail'?46:39,d:36+i%3*6,h,
       roof:['#dfaa79','#db937a','#e9d4a7','#a8bdba'][i%4],style});
+  }
+}
+// The tower complexes share one scale and sit on separate grounds clear of the road network.
+for(const [x,y,fullOnly] of [
+  [1025,400,false],[2200,850,false],
+  [675,2000,true],[1400,2950,true],[6425,3625,true],[7325,2250,true],
+  [2150,1950,true],[4925,6575,true],
+  [3475,3225,true],[7900,4625,true],[8425,2075,true],[5650,6375,true]
+]){
+  buildingCandidates.push({x,y,w:610.1,d:650.1,h:900,
+    roof:'#a8bdba',style:'glass',importedTower:true,fullOnly});
+}
+for(const [x,y] of [
+  [1630,2130],[1630,1870],[590,670],[1490,960],[1030,1390],[2400,1490],
+  [1380,2250],[2290,2530],[730,3200],[2190,3080],[1350,4010],[3000,4050],
+  [6930,3750],[4920,7200]
+]){
+  buildingCandidates.push({x,y,w:155,d:155,h:300,style:'glass',importedTower:true,fullOnly:true,model:'building03'});
+}
+for(const [x,y] of [
+  [455,1145],[1270,1270],[1545,1385],[1395,1715],[2665,1170],[3020,2615],
+  [1925,2545],[925,2815],[2155,3330],[1520,3655],[2765,4140],[865,3580]
+]){
+  buildingCandidates.push({x,y,w:200,d:205,h:220,style:'brick',importedTower:true,fullOnly:true,model:'cityBuilding'});
+}
+// The base set supplies one site and height for each distinct New York building.
+const newYorkBuildings=[
+  ['b1_0',625,480,85],['b2_1',1100,825,92],['b3_2',510,1400,82],
+  ['b4_3',535,1580,105],['b5_4',1070,1870,132],['b6_5',1585,1660,125],
+  ['g1_8',1880,1275,290],['g2_9',2140,1530,300],['g3_10',1215,2070,340],
+  ['g4_11',1665,2510,300],['g5_12',1250,2525,285],['g6_13',1515,2520,310],
+  ['emp_state._final_14',1920,3060,360],['metlife_15',2520,2880,255],
+  ['tower_one_16',2690,3350,410],['christler_17',2895,3525,345],
+  ['woolworth_18',3180,4210,315],['new_york_times_19',1665,4295,330],
+  ['flatiron_20',1110,4200,155]
+];
+const newYorkRepeats=[
+  [
+    [870,1435],[1070,1235],[695,1435],[1295,985],[1070,2010],[2120,2560],
+    [2320,2910],[2545,2735],[2620,2560],[2720,2810],[1945,3985],[1945,4210],
+    [2120,3985],[1770,3985],[2070,4385],[2545,3410],[2370,3410],[2720,3535],[2720,3210]
+  ],[
+    [2545,3235],[1070,2185],[745,2410],[1120,2510],[945,2635],[645,2585],
+    [1770,810],[1670,635],[1320,810],[1545,460],[1720,460],[545,4085],
+    [620,3910],[620,4260],[445,3910],[370,4085],[3020,2810],[2795,2985],[2870,2435]
+  ]
+];
+for(const [index,[variant,x,y,h]] of newYorkBuildings.entries()){
+  for(const [siteX,siteY] of [[x,y],...newYorkRepeats.map(set=>set[index])]){
+    buildingCandidates.push({x:siteX,y:siteY,w:105,d:105,h,style:'brick',importedTower:true,
+      fullOnly:true,model:'newYork',variant});
+  }
+}
+// Each of the other islands gets the complete New York set plus both apartment styles.
+for(const sites of [
+  [
+    [7055,2925],[7680,3400],[8180,3450],[8980,3450],[9180,2600],[8830,2300],
+    [7830,1850],[6855,2425],[7905,4025],[6905,2925],[7830,3400],[8155,3300],
+    [9080,3300],[9330,2625],[8830,2150],[7880,2000],[6930,2275],[7755,4025],
+    [7205,2925],[7505,3400],[8355,3575],[8805,3550],[9005,2625],[8880,1925],
+    [7880,1650],[6530,2450],[7955,3825]
+  ],[
+    [4760,7260],[5460,7585],[6235,7035],[6860,7085],[7160,7560],[5960,7760],
+    [4685,7710],[4010,7260],[3610,7560],[4760,7110],[5310,7585],[6210,6885],
+    [6710,7085],[7010,7585],[5810,7785],[4535,7735],[3935,7110],[3460,7510],
+    [4610,7310],[5635,7585],[6035,6935],[6860,6910],[7335,7460],[6160,7785],
+    [4885,7660],[4210,7335],[3810,7535]
+  ]
+]){
+  for(const [i,[x,y]] of sites.entries()){
+    const common={x,y,style:'brick',importedTower:true,fullOnly:true};
+    if(i<newYorkBuildings.length){
+      const [variant,,,h]=newYorkBuildings[i];
+      buildingCandidates.push({...common,w:105,d:105,h,model:'newYork',variant});
+    }else if(i<newYorkBuildings.length+4){
+      buildingCandidates.push({...common,w:155,d:155,h:300,model:'building03'});
+    }else{
+      buildingCandidates.push({...common,w:200,d:205,h:220,model:'cityBuilding'});
+    }
   }
 }
 for(let row=0;row<12;row++){
@@ -191,17 +299,46 @@ function roadCrossesLot([ax,ay],[bx,by],lot,margin){
 const bridgeSegments=bridges.map(({west,east,y,vertical,width})=>({
   points:vertical?[[y,west],[y,east]]:[[west,y],[east,y]],width
 }));
-const runwaySegment=[[airfield.x,airfield.y-airfield.d/2],[airfield.x,airfield.y+airfield.d/2]];
-export const buildings=buildingCandidates.filter(lot=>
-  !segments.some(([a,b])=>roadCrossesLot(a,b,lot,roadWidth/2+8))
-  &&!bridgeSegments.some(({points:[a,b],width})=>roadCrossesLot(a,b,lot,width/2))
-  &&!roadCrossesLot(...runwaySegment,lot,airfield.w/2+7)
-);
+export function buildingClearsRoads(lot){
+  return !segments.some(([a,b])=>roadCrossesLot(a,b,lot,roadWidth/2+8))
+    &&!bridgeSegments.some(({points:[a,b],width})=>roadCrossesLot(a,b,lot,width/2))
+    &&stadiums.every(site=>lot===site||Math.abs(lot.x-site.x)>=(lot.w+site.w)/2+12||Math.abs(lot.y-site.y)>=(lot.d+site.d)/2+12);
+}
+export const buildings=buildingCandidates.filter(buildingClearsRoads);
+
+function addScatteredBuildings({seed,minX,maxX,minY,maxY,onIsland}){
+  const random=()=>{
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    return seed/4294967296;
+  };
+  const occupied=buildings.filter(lot=>lot.importedTower);
+  const overlaps=(a,b)=>Math.abs(a.x-b.x)<(a.w+b.w)/2+21&&Math.abs(a.y-b.y)<(a.d+b.d)/2+21;
+  let placed=0;
+  for(let attempt=0;attempt<4000&&placed<36;attempt++){
+    const x=Math.round(minX+random()*(maxX-minX));
+    const y=Math.round(minY+random()*(maxY-minY));
+    const [variant,,,height]=newYorkBuildings[Math.floor(random()*newYorkBuildings.length)];
+    const type=random();
+    const style=type<.58?{w:105,d:105,h:height,model:'newYork',variant}
+      :type<.82?{w:155,d:155,h:300,model:'building03'}
+      :{w:200,d:205,h:220,model:'cityBuilding'};
+    const lot={x,y,...style,style:'brick',importedTower:true,fullOnly:true,scattered:true};
+    const width=lot.w/2+30,depth=lot.d/2+30;
+    if(!onIsland(x-width,y-depth)||!onIsland(x-width,y+depth)||
+      !onIsland(x+width,y-depth)||!onIsland(x+width,y+depth))continue;
+    if(occupied.some(other=>overlaps(lot,other))||!nearRoad(x,y,440)||!buildingClearsRoads(lot))continue;
+    buildings.push(lot);
+    occupied.push(lot);
+    placed++;
+  }
+}
+
+addScatteredBuildings({seed:10217,minX:6300,maxX:9680,minY:900,maxY:4760,onIsland:isDesert});
+addScatteredBuildings({seed:42197,minX:3150,maxX:7820,minY:6150,maxY:8170,onIsland:isSnow});
 
 const respawnSegments=[
   ...segments,
-  ...bridgeSegments.map(({points})=>points),
-  runwaySegment
+  ...bridgeSegments.map(({points})=>points)
 ];
 
 export function nearestRoadSpawn(car){
@@ -222,12 +359,25 @@ export function nearestRoadSpawn(car){
 }
 
 export function isRoad(x,y){
-  return Boolean(bridgeAt(x,y))||nearRoad(x,y,roadWidth/2+3)||runwayDistance(x,y)<=0;
+  return Boolean(bridgeAt(x,y))||nearRoad(x,y,roadWidth/2+3);
 }
 export const streetlights=Array.from({length:8},(_,i)=>1610+i*100)
-  .flatMap(y=>[1731,1809].map(x=>({x,y})))
+  .flatMap(y=>[1731,1809].map(x=>({x,y,streetlight:true})))
   .filter(({x,y})=>!nearRoad(x,y,roadWidth/2+3));
-const obstacles=[...buildings,lighthouse,hangar];
+// Pedestrian fixtures use the same pole at a shorter height.
+streetlights.push(...[[1820,1940],[1720,1884],[1820,1787],[1820,2088],[1720,2071]]
+  .filter(([x,y])=>!overlapsSidewalk(x,y,1))
+  .map(([x,y])=>({x,y,streetlight:true,footpathLamp:true})));
+const obstacles=[...buildings,lighthouse,...stadiums];
+let activeBuildingFootprints=new Map();
+
+export function setBuildingFootprints(footprints){
+  activeBuildingFootprints=footprints;
+}
+
+export function basicTowerLot(lot){
+  return {...lot,w:62,d:66,h:90};
+}
 
 export function vehicleHitsBuilding({x,y,angle,model=0}){
   const {length=1,width=1}=CARS[model];
@@ -236,11 +386,20 @@ export function vehicleHitsBuilding({x,y,angle,model=0}){
   const c=Math.abs(cos),s=Math.abs(sin);
   const reachX=halfLength*c+halfWidth*s;
   const reachY=halfLength*s+halfWidth*c;
-  return obstacles.some(b=>{
+  const hits=b=>{
     const dx=b.x-x,dy=b.y-y,w=b.w/2,d=b.d/2;
     return Math.abs(dx)<w+reachX&&Math.abs(dy)<d+reachY
       &&Math.abs(dx*cos+dy*sin)<halfLength+w*c+d*s
       &&Math.abs(dy*cos-dx*sin)<halfWidth+w*s+d*c;
+  };
+  return obstacles.some(b=>{
+    if(activeBuildingFootprints.has(b)){
+      const footprint=activeBuildingFootprints.get(b);
+      return footprint!==null&&hits(footprint.bounds)&&footprint.boxes.some(hits);
+    }
+    const stadiumLayout=basicStadiumLayouts.get(b);
+    if(stadiumLayout)return hits(b)&&stadiumLayout.boxes.some(hits);
+    return !b.fullOnly&&hits(b.importedTower?basicTowerLot(b):b);
   });
 }
 
@@ -252,14 +411,58 @@ const treeCandidate=(forest=false)=>({
 export const trees=[
   ...Array.from({length:3200},()=>treeCandidate()),
   ...Array.from({length:430},()=>treeCandidate(true))
-].filter(({x,y})=>x<shore(y)-72 && runwayDistance(x,y)>40 && !bridgeAt(x,y) && !nearRoad(x,y,49)
+].filter(({x,y,r})=>x<shore(y)-72 && stadiumDistance(x,y)>16 && !bridgeAt(x,y) && !overlapsSidewalk(x,y,Math.max(9.5,r+2))
   && !obstacles.some(b=>Math.abs(x-b.x)<b.w/2+17 && Math.abs(y-b.y)<b.d/2+17));
 for(let i=0;i<680;i++){
   const y=5660+random()*2790,x=2600+random()*5800;
-  if(!isSnow(x,y)||nearRoad(x,y,55)||bridgeAt(x,y)||buildings.some(b=>Math.abs(x-b.x)<43&&Math.abs(y-b.y)<39))continue;
-  trees.push({x,y,r:7+random()*15,shade:random(),type:0,snow:true});
+  if(!isSnow(x,y)||stadiumDistance(x,y)<16||nearRoad(x,y,55)||bridgeAt(x,y)||buildings.some(b=>Math.abs(x-b.x)<43&&Math.abs(y-b.y)<39))continue;
+  const r=7+random()*15,shade=random();
+  if(!overlapsSidewalk(x,y,r+2))trees.push({x,y,r,shade,type:0,snow:true});
 }
-export const isPalm=tree=>tree.x>shore(tree.y)-565&&tree.type>.49;
+// Dense, seeded groves in open parts of Juniper Island.
+let forestSeed=84261;
+const forestRandom=()=>((forestSeed=(Math.imul(forestSeed,1664525)+1013904223)>>>0)/4294967296);
+for(const [cx,cy,rx,ry,pine] of [
+  [760,1040,260,225,false],[910,3300,360,300,true],
+  [1180,4600,365,265,true],[2630,1990,260,300,false]
+]){
+  for(let dx=-rx;dx<=rx;dx+=23){
+    for(let dy=-ry;dy<=ry;dy+=23){
+      const x=cx+dx+(forestRandom()-.5)*15;
+      const y=cy+dy+(forestRandom()-.5)*15;
+      const edge=((x-cx)/rx)**2+((y-cy)/ry)**2;
+      if(edge>1||forestRandom()<edge*.20)continue;
+      const r=8+forestRandom()*10;
+      if(x>shore(y)-85||stadiumDistance(x,y)<=16||bridgeAt(x,y)||
+        overlapsSidewalk(x,y,r+3)||obstacles.some(b=>Math.abs(x-b.x)<b.w/2+r+6&&Math.abs(y-b.y)<b.d/2+r+6)||
+        trees.some(t=>Math.abs(t.x-x)<10&&Math.abs(t.y-y)<10))continue;
+      const type=pine?forestRandom()*.39:.17+forestRandom()*.31;
+      trees.push({x,y,r,shade:forestRandom(),type,forest:true});
+    }
+  }
+}
+export const isPalm=tree=>Boolean(tree.streetPalm)||tree.x>shore(tree.y)-565&&tree.type>.49;
+export const sceneryRadius=item=>item.streetlight?.35:isPalm(item)?.82:item.r*.09;
+
+for(const [x,y,height,phase] of [
+  [1723,1640,23,.2],[1817,1713,29,2.3],[1723,1786,27,4.6],[1817,1859,23,6.9],
+  [1723,1932,29,9.2],[1819,1971,28,11.5],[1723,2062,25,13.8],
+  [1817,2151,29,16.1],[1723,2224,24,18.4],[1817,2297,28,20.7]
+]){
+  if(!overlapsSidewalk(x,y,5))trees.push({x,y,height,phase,r:height*.42,shade:.5,type:1,streetPalm:true});
+}
+
+export const breakableScenery=[...trees,...streetlights];
+
+export function fallenSceneryPose(item,impact){
+  const progress=clamp(impact.age/.85,0,1);
+  const slide=1-(1-progress)**3;
+  return {
+    x:item.x+Math.cos(impact.angle)*impact.slide*slide,
+    y:item.y+Math.sin(impact.angle)*impact.slide*slide,
+    tilt:Math.min(Math.PI*.49,progress*progress*2.1)
+  };
+}
 const grass = Array.from({length:20500},()=>({x:random()*SIZE,y:random()*SIZE,r:1+random()*5,a:random()}))
   .filter(({x,y})=>x<shore(y)-38);
 
@@ -378,7 +581,11 @@ export function makeMap(){
   roads(c,false);
   drawBridge(c,false);
   c.fillStyle='#626967';
-  c.fillRect(airfield.x-airfield.w/2,airfield.y-airfield.d/2,airfield.w,airfield.d);
+  for(const site of stadiums){
+    c.beginPath();
+    c.roundRect(site.x-site.w/2,site.y-site.d/2,site.w,site.d,22);
+    c.fill();
+  }
   return layer;
 }
 
@@ -405,7 +612,11 @@ export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[]){
   roads(c,true);
   drawBridge(c,true);
   c.fillStyle='#acb5aa';
-  c.fillRect(airfield.x-airfield.w/2,airfield.y-airfield.d/2,airfield.w,airfield.d);
+  for(const site of stadiums){
+    c.beginPath();
+    c.roundRect(site.x-site.w/2,site.y-site.d/2,site.w,site.d,22);
+    c.fill();
+  }
   if(labels){
     c.font=`700 ${20/scale}px system-ui`;
     c.textAlign='center';
@@ -480,6 +691,15 @@ function drawTree(c,t){
     }
   }
 }
+function drawBreakable(c,item){
+  if(!item.streetlight){drawTree(c,item);return;}
+  c.fillStyle='#53666a';
+  const height=item.footpathLamp?8:13.6;
+  c.fillRect(item.x-.35,item.y-height,.7,height);
+  c.fillStyle='#d4d2ad';
+  c.fillRect(item.x-.83,item.y-height,1.65,1.1);
+}
+
 function drawBuilding(c,b){
   const {x,y,w,d,h,roof}=b;
   const l=x-w/2,r=x+w/2,t=y-d/2,f=y+d/2;
@@ -513,7 +733,7 @@ function drawCar(c,car){
   c.restore();
 }
 
-export function renderWorld(c,map,camera,width,height,car,targets,time,patrols=[]){
+export function renderWorld(c,map,camera,width,height,car,targets,time,patrols=[],brokenScenery){
   const {x,y,zoom}=camera;
   c.fillStyle='#496850';c.fillRect(0,0,width,height);
   c.save();
@@ -522,7 +742,7 @@ export function renderWorld(c,map,camera,width,height,car,targets,time,patrols=[
   c.translate(-x,-y);
   c.drawImage(map,0,0,WORLD_WIDTH,WORLD_HEIGHT);
   const visible=o=>Math.abs(o.x-x)<width/(zoom*2)+110 && Math.abs(o.y-y)<height/(zoom*1.7)+120;
-  const scenery=[...trees.filter(visible),...buildings.filter(visible),...patrols.filter(visible),car].sort((a,b)=>a.y-b.y);
+  const scenery=[...breakableScenery.filter(visible),...buildings.filter(visible),...patrols.filter(visible),car].sort((a,b)=>a.y-b.y);
   for(const target of targets.filter(visible)){
     const pulse=1+Math.sin(time*3)*.12;
     c.beginPath();c.arc(target.x,target.y,28*pulse,0,7);c.fillStyle='#f4b85a30';c.fill();
@@ -531,14 +751,26 @@ export function renderWorld(c,map,camera,width,height,car,targets,time,patrols=[
     polygon(c,[[target.x,target.y-45],[target.x+7,target.y-38],[target.x,target.y-31],[target.x-7,target.y-38]],'#ffdc89');
   }
   for(const item of scenery) {
-    if(item===car||item.police||item.traffic)drawCar(c,car);
+    if(item===car||item.police||item.traffic)drawCar(c,item);
     else if(item.roof)drawBuilding(c,item);
-    else drawTree(c,item);
+    else {
+      const impact=brokenScenery?.get(item);
+      if(!impact){drawBreakable(c,item);continue;}
+      const radius=sceneryRadius(item);
+      c.fillStyle=item.streetlight?'#53666a':'#976f47';
+      c.beginPath();c.arc(item.x,item.y,radius,0,7);c.fill();
+      const pose=fallenSceneryPose(item,impact);
+      c.save();
+      c.translate(pose.x,pose.y);
+      c.rotate(impact.angle+pose.tilt);
+      drawBreakable(c,{...item,x:0,y:0});
+      c.restore();
+    }
   }
   c.restore();
 }
 
-export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED){
+export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED,brokenScenery){
   const road=isRoad(car.x,car.y);
   const reversePedal=keys.has('brakeReverse');
   const pedalBraking=reversePedal&&car.speed>0;
@@ -565,19 +797,36 @@ export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED){
     ||(!isLand(x,y)&&!bridgeAt(x,y)));
   if(car.boundaryHit)return road;
   const blocked=vehicleHitsBuilding({x,y,angle:car.angle,model:car.model});
-  const treeHit=trees.some(tree=>{
-    const dx=tree.x-x,dy=tree.y-y;
-    if(Math.abs(dx)>21||Math.abs(dy)>21)return false;
-    const cos=Math.cos(car.angle),sin=Math.sin(car.angle);
-    const along=Math.max(0,Math.abs(dx*cos+dy*sin)-15.9);
-    const across=Math.max(0,Math.abs(dy*cos-dx*sin)-6.9);
-    const radius=isPalm(tree)?.82:tree.r*.09;
-    return along*along+across*across<radius*radius;
-  });
-  if(blocked || treeHit || railHit){
+  if(blocked||railHit){
     if(blocked&&vehicleHitsBuilding(car))car.angle=previousAngle;
     car.speed*=-.3;
+    return road;
   }
-  else {car.x=x;car.y=y;}
+  const cos=Math.cos(car.angle),sin=Math.sin(car.angle);
+  const {length=1,width=1}=CARS[car.model??0];
+  const halfLength=15.9*length,halfWidth=6.9*width;
+  const reach=Math.hypot(halfLength,halfWidth)+2.5;
+  for(const item of breakableScenery){
+    const dx=item.x-x,dy=item.y-y;
+    if(Math.abs(dx)>reach||Math.abs(dy)>reach||brokenScenery?.has(item))continue;
+    const along=Math.max(0,Math.abs(dx*cos+dy*sin)-halfLength);
+    const lateral=dy*cos-dx*sin;
+    const across=Math.max(0,Math.abs(lateral)-halfWidth);
+    const radius=sceneryRadius(item);
+    if(along*along+across*across>=radius*radius)continue;
+    if(!brokenScenery||speed<4){
+      car.speed*=-.3;
+      return road;
+    }
+    const side=lateral<0?-1:1;
+    brokenScenery.set(item,{
+      angle:car.angle+side*Math.PI*.39+(car.speed<0?side*Math.PI*.22:0),
+      slide:12+Math.min(speed*.15,19),
+      age:0
+    });
+    car.speed*=.72;
+  }
+  car.x=x;
+  car.y=y;
   return road;
 }

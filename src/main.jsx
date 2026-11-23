@@ -5,7 +5,7 @@ import {CARS,cycleCar} from './cars';
 import {CHECKPOINT_COUNT,createChase,restartChase,delayChase,updateChase,recordChase,checkpointDirections} from './chase';
 import React, {useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {START,KMH_PER_SPEED_UNIT,ISLAND_NAMES,ISLAND_STARTS,islandName,isRoad,nearestRoadSpawn,carMarker,drive,makeMap,renderWorld,drawMinimap} from './world';
+import {START,KMH_PER_SPEED_UNIT,ISLAND_NAMES,ISLAND_STARTS,islandName,isRoad,nearestRoadSpawn,carMarker,drive,setBuildingFootprints,drawMinimap} from './world';
 import {makeScene,WHEEL_RADIUS} from './scene3d';
 import './style.css';
 import {createEngine} from './engine';
@@ -37,7 +37,7 @@ function TouchIcon({action}){
 }
 
 function App(){
-  const world=useRef(null), fallback=useRef(null), radar=useRef(null), largeRadar=useRef(null);
+  const world=useRef(null), basicWorld=useRef(null), radar=useRef(null), largeRadar=useRef(null);
   const held=useRef(new Map());
   const started=useRef(false);
   const lightingTime=useRef(LIGHTING_PRESETS.Day);
@@ -54,7 +54,9 @@ function App(){
   const [selectedIsland,setSelectedIsland]=useState('coast');
   const wide=useRef(false);
   const [wideView,setWideView]=useState(false);
-  const [flatView,setFlatView]=useState(false);
+  const ready=useRef(false), useBasicGraphics=useRef(null), useFullGraphics=useRef(null);
+  const [basicGraphics,setBasicGraphics]=useState(false);
+  const [loading,setLoading]=useState({progress:0,state:'loading'});
   const race=useRef(null);
   const pursuit=useRef(null);
   const traffic=useRef(null);
@@ -91,6 +93,7 @@ function App(){
   },[]);
 
   function beginDrive(){
+    if(!ready.current)return;
     const enterLandscape=async()=>{
       try{
         if(!document.fullscreenElement&&document.documentElement.requestFullscreen){
@@ -253,6 +256,7 @@ function App(){
       }
     } catch {}
     const onKey=e=>{
+      if(!ready.current)return;
       if(!started.current){
         if(e.target.closest?.('input'))return;
         if(e.type==='keydown' && (e.code==='ArrowLeft'||e.code==='ArrowRight')){
@@ -287,20 +291,18 @@ function App(){
     window.addEventListener('blur',clear);
     document.addEventListener('fullscreenchange',onFullscreen);
 
-    let scene;
-    try {scene=makeScene(world.current);} catch(error){console.warn('3D renderer unavailable',error);}
-    if(!scene)setFlatView(true);
-    const canvas=scene?world.current:fallback.current;
-    const map=scene?null:makeMap();
-    const ctx=scene?null:canvas.getContext('2d');
+    let scene,basicScene,disposed=false,renderBasic=false,sceneReady=false,request=0,initialize;
+    const brokenScenery=new Map();
     let width,height,raf,last=null,update=0,orbitStart=null;
     const reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
     const resize=()=>{
       ({width,height}=world.current.getBoundingClientRect());
       const ratio=Math.min(window.devicePixelRatio||1,2);
-      canvas.width=Math.round(width*ratio);
-      canvas.height=Math.round(height*ratio);
-      ctx?.setTransform(ratio,0,0,ratio,0,0);
+      for(const canvas of [world.current,basicWorld.current]){
+        canvas.width=Math.round(width*ratio);
+        canvas.height=Math.round(height*ratio);
+      }
+
     };
     const observer=new ResizeObserver(resize);
     observer.observe(world.current);
@@ -312,8 +314,7 @@ function App(){
       if(!started.current){
         orbitStart??=now;
         const orbit=car.current.angle+.68+(reduceMotion.matches?0:(now-orbitStart)*2*Math.PI/32000);
-        if(scene)scene.render(camera.current,car.current,[],false,orbit);
-        else renderWorld(ctx,map,camera.current,width,height,car.current,[],now/1000);
+        (renderBasic?basicScene:scene).render(camera.current,car.current,[],false,orbit,0,true,false,0,[],now,[],brokenScenery);
         raf=requestAnimationFrame(frame);
         return;
       }
@@ -324,11 +325,12 @@ function App(){
         return;
       }
       orbitStart=null;
+      for(const impact of brokenScenery.values())impact.age=Math.min(.85,impact.age+dt);
       const controls=new Set(held.current.values());
       const player=car.current;
       const {x,y,speed,angle}=player;
       const canDrive=pausedAt.current===null&&police?.bustedAt==null;
-      const wasOnRoad=canDrive?drive(player,controls,dt):isRoad(player.x,player.y);
+      const wasOnRoad=canDrive?drive(player,controls,dt,undefined,brokenScenery):isRoad(player.x,player.y);
       const hitBoundary=player.boundaryHit;
       const civilians=traffic.current??[];
       if(canDrive&&!hitBoundary){
@@ -348,7 +350,7 @@ function App(){
       player.pitch+=(pitch-player.pitch)*response;
       if(pausedAt.current===null)player.braking=controls.has('brake')||(speed>0&&controls.has('brakeReverse'))||speed>8&&controls.has('down');
       if(police&&police.bustedAt===null){
-        updatePursuit(police,player,dt,now);
+        updatePursuit(police,player,dt,now,brokenScenery);
         if(police.bustedAt!==null){
           held.current.clear();
           setMapOpen(false);
@@ -375,8 +377,8 @@ function App(){
       cam.angle+=Math.atan2(Math.sin(turn),Math.cos(turn))*follow;
       const zoom=Math.max(.79,Math.min(1.45,width/940))-Math.abs(player.speed)*.0006;
       cam.zoom+=(zoom-cam.zoom)*follow;
-      if(scene)scene.render(cam,player,targets,wide.current,null,dt,road,controls.has('up')&&!player.braking,lightingTime.current,patrols,now,civilians);
-      else renderWorld(ctx,map,cam,width,height,player,targets,now/1000,[...patrols,...civilians]);
+      const activeScene=renderBasic?basicScene:scene;
+      activeScene.render(cam,player,targets,wide.current,null,dt,road,controls.has('up')&&!player.braking,lightingTime.current,patrols,now,civilians,brokenScenery);
       if(now-update>65){
         update=now;
         engine.current?.update(player.speed,controls.has('up')||controls.has('down')||(player.speed<0&&controls.has('brakeReverse')),muted.current||pausedAt.current!==null||police?.bustedAt!=null||document.hidden);
@@ -389,10 +391,84 @@ function App(){
       }
       raf=requestAnimationFrame(frame);
     }
-    raf=requestAnimationFrame(frame);
+    function startRendering(){
+      if(ready.current)return;
+      ready.current=true;
+      raf=requestAnimationFrame(frame);
+    }
+    useBasicGraphics.current=()=>{
+      if(disposed||renderBasic)return;
+      try{
+        basicScene??=makeScene(basicWorld.current,undefined,{basic:true});
+        if(!basicScene)throw new Error('WebGL is unavailable in this browser.');
+      }catch(error){
+        console.warn('Basic 3D graphics unavailable',error);
+        setLoading(previous=>({...previous,basicUnavailable:true}));
+        return;
+      }
+      if(!sceneReady){
+        ++request;
+        cancelAnimationFrame(initialize);
+        scene?.destroy();
+        scene=null;
+        setLoading({progress:0,state:'idle'});
+      }
+      setBuildingFootprints(new Map());
+      renderBasic=true;
+      resize();
+      setBasicGraphics(true);
+      startRendering();
+    };
+    function activateFull(){
+      setBuildingFootprints(scene.buildingFootprints);
+      renderBasic=false;
+      setBasicGraphics(false);
+      setLoading({progress:100,state:'ready'});
+      startRendering();
+    }
+    useFullGraphics.current=()=>{
+      if(disposed)return;
+      if(sceneReady){
+        activateFull();
+        return;
+      }
+      const activeRequest=++request;
+      const current=()=>!disposed&&request===activeRequest;
+      setLoading({progress:0,state:'loading'});
+      const fail=error=>{
+        if(!current())return;
+        console.warn('Game startup failed',error);
+        scene?.destroy();
+        scene=null;
+        setLoading(previous=>({...previous,state:'error',message:error.message}));
+      };
+      initialize=requestAnimationFrame(()=>{
+        try{
+          scene=makeScene(world.current,(loaded,total)=>{
+            if(current())setLoading({progress:Math.min(99,Math.round(loaded/total*100)),state:'loading'});
+          });
+          if(!scene)throw new Error('WebGL is unavailable in this browser.');
+          scene.ready.then(()=>{
+            if(!current())return;
+            sceneReady=true;
+            activateFull();
+          }).catch(fail);
+        }catch(error){
+          fail(error);
+        }
+      });
+    };
+    useFullGraphics.current();
     return ()=>{
+      disposed=true;
+      ready.current=false;
+      setBuildingFootprints(new Map());
+      useBasicGraphics.current=null;
+      useFullGraphics.current=null;
+      cancelAnimationFrame(initialize);
       observer.disconnect();
       scene?.destroy();
+      basicScene?.destroy();
       engine.current?.close();
       engine.current=null;
       cancelAnimationFrame(raf);
@@ -414,8 +490,26 @@ function App(){
   const heading=['N','NE','E','SE','S','SW','W','NW'][((Math.round((stats.angle+Math.PI/2)/(Math.PI/4))%8)+8)%8];
 
   return <main className="shell">
-    <canvas className="world" ref={world} aria-label="3D coastal driving world" aria-hidden={flatView}/>
-    <canvas className="world" ref={fallback} hidden={!flatView} aria-label="Top-down coastal driving world"/>
+    <canvas className="world" ref={world} aria-label="3D coastal driving world" aria-hidden={basicGraphics||loading.state!=='ready'}/>
+    <canvas className="world" ref={basicWorld} hidden={!basicGraphics} aria-label="Basic 3D coastal driving world"/>
+    {!basicGraphics&&loading.state!=='ready'?<section className="game-loading" aria-labelledby="loading-title">
+      <div className="game-loading-card panel">
+        <img className="mark" src={`${import.meta.env.BASE_URL}coastline-192.png`} alt="" width="46" height="46"/>
+        <h1 id="loading-title">Coastline Chase<span>.io</span></h1>
+        {loading.state==='error'?<>
+          <p role="alert">The full 3D world couldn’t load. {loading.message}</p>
+          {loading.basicUnavailable&&<p role="alert">Basic graphics are also unavailable in this browser.</p>}
+          <div className="game-loading-actions">
+            <button className="start" type="button" onClick={()=>useFullGraphics.current?.()}>Try again</button>
+            {!loading.basicUnavailable&&<button className="basic-graphics" type="button" onClick={()=>useBasicGraphics.current?.()}>Play with basic graphics</button>}
+          </div>
+        </>:<>
+          <div className="game-loading-label"><label htmlFor="world-progress">Loading world</label><span>{loading.progress}%</span></div>
+          <progress id="world-progress" value={loading.progress} max="100"/>
+          {!loading.basicUnavailable&&<button className="basic-graphics" type="button" onClick={()=>useBasicGraphics.current?.()}>Play with basic graphics</button>}
+        </>}
+      </div>
+    </section>:<>
     <div className="vignette"/>
     <header className="top">
       <div className="brand">
@@ -437,15 +531,21 @@ function App(){
         Menu
       </button>}
       <div className={driving?'top-actions':'top-actions landing-actions'}>
+        {(!driving||basicGraphics)&&<button className="basic-graphics graphics-switch" type="button"
+          disabled={basicGraphics&&loading.state==='loading'}
+          onClick={()=>basicGraphics?useFullGraphics.current?.():useBasicGraphics.current?.()}>
+          {basicGraphics?(loading.state==='loading'?`Loading full graphics ${loading.progress}%`:'Load full graphics'):'Play with basic graphics'}
+        </button>}
+        {basicGraphics&&loading.state==='error'&&<span className="graphics-load-error panel" role="status">{loading.message}</span>}
         {driving&&<>
         <button className="square" title="Home" aria-label="Home" onClick={goHome}><Icon name="home"/></button>
         <button className="square camera" aria-label="Mute engine sound" aria-pressed={soundOff}
           onClick={toggleSound}>
           <span>{soundOff?'OFF':'SND'}</span>
         </button>
-        {!flatView&&<button className="square camera" title="Switch camera (C)" aria-label="Wide chase camera" aria-pressed={wideView} onClick={switchCamera}><span>CAM</span></button>}
+        {<button className="square camera" title="Switch camera (C)" aria-label="Wide chase camera" aria-pressed={wideView} onClick={switchCamera}><span>CAM</span></button>}
         <button className="square" title="Respawn on nearest road (R)" aria-label="Respawn on nearest road" onClick={respawn} disabled={paused}><Icon name="reset"/></button>
-        {!flatView&&<div className="lighting-controls panel" role="group" aria-label="Time of day">
+        {<div className="lighting-controls panel" role="group" aria-label="Time of day">
           {Object.keys(LIGHTING_PRESETS).map(label=>(
             <button type="button" key={label} aria-pressed={lightingPreset===label} onClick={()=>selectLighting(label)}>{label}</button>
           ))}
@@ -559,6 +659,7 @@ function App(){
     {policeMode?.busted&&<div className="busted-screen" role="alertdialog" aria-modal="true" aria-label="Busted">
       <div><h2>BUSTED</h2><p>Returning Home</p></div>
     </div>}
+    </>}
     </>}
   </main>;
 }

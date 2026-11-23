@@ -2,9 +2,16 @@ export const LIGHTING_PRESETS={Day:85,Evening:190,Night:300};
 
 const skyColors=[
   [.86,.79,.66],
-  [.74,.84,.88],
+  [.76,.87,.94],
   [.94,.56,.36],
   [.075,.12,.22]
+];
+
+const zenithColors=[
+  [.29,.54,.74],
+  [.16,.49,.78],
+  [.30,.34,.56],
+  [.022,.043,.094]
 ];
 
 function smooth(value){
@@ -20,6 +27,7 @@ export function daylight(seconds){
   const blend=smooth((phase-start)/durations[index]);
   return {
     sky:skyColors[index].map((channel,i)=>channel+(skyColors[index+1][i]-channel)*blend),
+    zenith:zenithColors[index].map((channel,i)=>channel+(zenithColors[index+1][i]-channel)*blend),
     dusk:smooth((phase-125)/68)*(1-smooth((phase-203)/82)),
     night:smooth((phase-180)/120),
     lamps:smooth((phase-162)/76)

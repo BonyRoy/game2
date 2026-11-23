@@ -7,7 +7,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible{outline:2px solid #ffcc80;outline-offset:4px}
 .shell{--hud-bottom:clamp(14px,3.1vh,34px);--mission-top:clamp(82px,12vh,123px);width:100%;height:100%;min-height:280px;position:relative;isolation:isolate;overflow:hidden}
 .world,.vignette{position:absolute;inset:0;width:100%;height:100%}
-.vignette{pointer-events:none;background:linear-gradient(180deg,#17262080 0%,transparent 28%,transparent 72%,#18262099 100%);box-shadow:inset 0 0 160px #1528235c}
+.vignette{pointer-events:none;background:linear-gradient(180deg,#10192438 0%,transparent 23%,transparent 72%,#10192466 100%);box-shadow:inset 0 0 160px #10192434}
 .top,.bottom{position:absolute;left:clamp(14px,3vw,45px);right:clamp(14px,3vw,45px);display:flex;align-items:center;justify-content:space-between;pointer-events:none}
 .top{top:clamp(14px,3.1vh,34px)}
 .bottom{bottom:var(--hud-bottom);align-items:end}
@@ -205,3 +205,22 @@ kbd{background:#e7f0dc13;border:1px solid #e7f0dc2a;border-radius:4px;padding:2p
 .island-destinations button:disabled{opacity:.55;cursor:default}
 
 .mission::-webkit-scrollbar{display:none}
+
+.game-loading{position:absolute;inset:0;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 50% 30%,#324e43,#142723 76%)}
+.game-loading-card{width:min(100%,420px);padding:28px;display:grid;gap:18px}
+.game-loading-card h1{font-size:clamp(28px,6vw,39px);line-height:1.1}
+.game-loading-card p,.game-loading-label{color:var(--muted);font-size:14px}
+.game-loading-label{display:flex;justify-content:space-between;gap:12px}
+.game-loading-label span{color:var(--cream);font-variant-numeric:tabular-nums}
+.game-loading-card progress{display:block;width:100%;height:9px;appearance:none;border:0;border-radius:9px;background:#344b43;overflow:hidden}
+.game-loading-card progress::-webkit-progress-bar{background:#344b43}
+.game-loading-card progress::-webkit-progress-value{background:var(--orange);border-radius:9px}
+.game-loading-card progress::-moz-progress-bar{background:var(--orange);border-radius:9px}
+.game-loading-card button{justify-self:start}
+.game-loading-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.basic-graphics{padding:10px 13px;border:1px solid var(--border);border-radius:8px;background:#293f37}
+.basic-graphics:hover{background:#355146}
+.graphics-switch{font-size:12px;font-weight:700;line-height:1.2}
+.graphics-switch:disabled{cursor:progress;opacity:.8}
+.graphics-load-error{position:absolute;right:0;top:calc(100% + 8px);padding:8px 12px;color:var(--cream);font-size:12px}
+@media(max-width:560px){.landing-actions .graphics-switch{position:absolute;right:0;top:calc(100% + 8px);width:max-content;max-width:45vw}}

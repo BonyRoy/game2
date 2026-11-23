@@ -25,14 +25,14 @@ function placePatrol(player,index,distance,occupied){
     const spawn=nearestRoadSpawn({x,y,angle:player.angle});
     if(separation(spawn,player).distance<45)continue;
     if(occupied.some(other=>separation(spawn,other).distance<8))continue;
-    return {...spawn,speed:0,steer:0,wheelSpin:0,stalled:0,closeEncounter:false,police:true};
+    return {...spawn,speed:0,steer:0,wheelSpin:0,stalled:0,braking:false,closeEncounter:false,police:true};
   }
   return null;
 }
 
 export function createPursuit(player,now=null,cruiser=null,traffic=[]){
   const patrols=cruiser?[{x:cruiser.x,y:cruiser.y,angle:cruiser.angle,speed:cruiser.speed,
-    wheelSpin:cruiser.wheelSpin,steer:0,stalled:0,closeEncounter:true,police:true}]:[];
+    wheelSpin:cruiser.wheelSpin,steer:0,stalled:0,braking:cruiser.braking,closeEncounter:true,police:true}]:[];
   for(let i=patrols.length;i<patrolLimits.length;i++){
     const patrol=placePatrol(player,i,100+i*64,[...patrols,...traffic]);
     if(patrol)patrols.push(patrol);
@@ -64,7 +64,7 @@ export function recordPursuit(record,run){
   return {survived,escaped};
 }
 
-export function updatePursuit(run,player,dt,now){
+export function updatePursuit(run,player,dt,now,brokenScenery){
   run.startedAt??=now;
   const elapsed=Math.max(0,now-run.startedAt);
   run.survived=elapsed/1000;
@@ -90,8 +90,8 @@ export function updatePursuit(run,player,dt,now){
     patrol.angle+=Math.max(-2.35*dt,Math.min(2.35*dt,turn));
     const limit=patrolSpeedLimit(index,wave);
     const speedLimit=distance<43?Math.min(limit,Math.max(12,Math.abs(player.speed)+8)):limit;
-    const x=patrol.x,y=patrol.y;
-    drive(patrol,throttle,dt,speedLimit);
+    const {x,y,speed}=patrol;
+    drive(patrol,throttle,dt,speedLimit,brokenScenery);
     const gap=separation(patrol,player);
     if(gap.distance<0){
       patrol.x-=gap.distance*gap.x;
@@ -101,6 +101,7 @@ export function updatePursuit(run,player,dt,now){
     if(occupied.some(other=>separation(patrol,other).distance<.35)){
       Object.assign(patrol,previous,{speed:0});
     }
+    if(dt>0)patrol.braking=Math.abs(patrol.speed)<Math.abs(speed)-.25;
     patrol.wheelSpin=(patrol.wheelSpin-Math.hypot(patrol.x-x,patrol.y-y)/2.75)%(Math.PI*2);
     patrol.stalled=patrol.boundaryHit||(distance>50&&Math.hypot(patrol.x-x,patrol.y-y)<dt*8)
       ?patrol.stalled+dt:0;
