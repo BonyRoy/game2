@@ -34,7 +34,37 @@ function normalMatrix(m){
   return [...first,0,...cross(c,a),0,...cross(a,b),0,0,0,0,1].map(value=>value*sign);
 }
 
-export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,clusterLights=false,combinedWheels,lensMaterials,origin=[0,0,0],wheelNodes,roofLightMaterial,normalize=false,groundAnchor=false,footprintMesh,keepIndices=false,textureOnly,splitNodes,omitMaterials=[]},signal){
+function separateFacade(vertices,distance){
+  const corners=new Map();
+  for(let i=0;i<vertices.length;i+=9){
+    const key=`${vertices[i]},${vertices[i+2]}`;
+    if(!corners.has(key))corners.set(key,{offsets:[],normals:new Map()});
+    const corner=corners.get(key);
+    corner.offsets.push(i);
+    const nx=vertices[i+6],nz=vertices[i+8];
+    const length=Math.hypot(nx,nz);
+    if(length>0)corner.normals.set(`${nx},${nz}`,[nx/length,nz/length]);
+  }
+  for(const {offsets,normals} of corners.values()){
+    let x=0,z=0;
+    for(const [nx,nz] of normals.values()){
+      x+=nx;
+      z+=nz;
+    }
+    const length=Math.hypot(x,z);
+    if(length===0)continue;
+    x/=length;
+    z/=length;
+    const alignment=Math.min(...[...normals.values()].map(([nx,nz])=>nx*x+nz*z));
+    const offset=distance/Math.max(.45,alignment);
+    for(const i of offsets){
+      vertices[i]+=x*offset;
+      vertices[i+2]+=z*offset;
+    }
+  }
+}
+
+export async function loadCarAsset({url,scale,reverse=false,lift=0,paint={},bakedWheels=false,clusterLights=false,combinedWheels,lensMaterials,origin=[0,0,0],wheelNodes,roofLightMaterial,normalize=false,groundAnchor=false,footprintMesh,keepIndices=false,textureOnly,splitNodes,repeatMaterials=[],useTextureSamplers=false,omitMaterials=[],omitNodes,surfaceHeights,sourceGrade,nodeOffsets,facadeOffsets},signal){
   const response=await fetch(url,{signal});
   if(!response.ok)throw new Error(`Car model request failed (${response.status})`);
   const file=new DataView(await response.arrayBuffer());
@@ -56,9 +86,12 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
 
   const body=new Map(),wheelGroups=new Map(),indexedParts=[],separateBuildings=new Map();
   const rearLenses=[],headLenses=[],redStrobe=[],blueStrobe=[],collisionFaces=[];
-  const position=([x,y,z])=>[(z-origin[2])*scale,(y-origin[1])*scale+lift,(origin[0]-x)*scale];
-  function visit(index,parent,axle,group=body){
+  const facing=reverse?-1:1;
+  const position=([x,y,z])=>[(z-origin[2])*scale*facing,(y-origin[1])*scale+lift,(origin[0]-x)*scale*facing];
+  function visit(index,parent,axle,group=body,heightOffset=0){
     const node=model.nodes[index];
+    if(omitNodes?.test(node.name))return;
+    heightOffset+=nodeOffsets?.[node.name]??0;
     const matrix=multiply(parent,localMatrix(node));
     if(splitNodes?.includes(node.name)){
       group=new Map();
@@ -110,15 +143,21 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
         const indices=primitive.indices===undefined?i=>i:accessor(primitive.indices);
         const count=model.accessors[primitive.indices??POSITION].count;
         if(keepIndices&&primitive.indices!==undefined&&model.accessors[POSITION].count<=65536){
+          const height=surfaceHeights?.[node.name];
           const vertices=new Float32Array(model.accessors[POSITION].count*9);
           for(let j=0;j<model.accessors[POSITION].count;j++){
             const point=position(transform(matrix,pos(j),pos(j,1),pos(j,2)));
-            const [nx,ny,nz]=normal?transform(normals,normal(j),normal(j,1),normal(j,2),0):[0,1,0];
-            vertices.set([...point,uv(j),uv(j,1),0,nz,ny,-nx],j*9);
+            if(height!==undefined)point[1]=height;
+            else if(sourceGrade)point[1]=Math.max(-.025,point[1]-sourceGrade(point[0],point[2])-heightOffset);
+            const [nx,ny,nz]=height!==undefined?[0,1,0]:normal?transform(normals,normal(j),normal(j,1),normal(j,2),0):[0,1,0];
+            vertices.set([...point,uv(j)*(uvTransform?.scale?.[0]??1)+(uvTransform?.offset?.[0]??0),
+              uv(j,1)*(uvTransform?.scale?.[1]??1)+(uvTransform?.offset?.[1]??0),0,nz*facing,ny,-nx*facing],j*9);
           }
+          const facadeOffset=facadeOffsets?.[source.name];
+          if(facadeOffset)separateFacade(vertices,facadeOffset);
           const elements=new Uint16Array(count);
           for(let i=0;i<count;i++)elements[i]=indices(i);
-          indexedParts.push({material,vertices,elements});
+          indexedParts.push({material,vertices,elements,surface:height!==undefined});
           continue;
         }
         const name=node.name??'';
@@ -159,7 +198,7 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
             for(const j of triangle){
               const point=position(transform(matrix,pos(j),pos(j,1),pos(j,2))).map((value,axis)=>value-target.pivot[axis]);
               const [nx,ny,nz]=normal?transform(normals,normal(j),normal(j,1),normal(j,2),0):[0,1,0];
-              vertices.push(...point,uv(j),uv(j,1),0,nz,ny,-nx);
+              vertices.push(...point,uv(j),uv(j,1),0,nz*facing,ny,-nx*facing);
             }
           }
           continue;
@@ -184,12 +223,12 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
           const v=uv(j,1)*(uvTransform?.scale?.[1]??1)+(uvTransform?.offset?.[1]??0);
           const frontLens=head&&(source.name!=='Material.014'||point[0]>0);
           if(frontLens)headLenses.push(point[0]+.024,point[1]+.024,point[2],1,.94,.78);
-          if(!frontLens||source.name==='Material.014')vertices.push(...point,u,v,0,nz,ny,-nx);
+          if(!frontLens||source.name==='Material.014')vertices.push(...point,u,v,0,nz*facing,ny,-nx*facing);
           if(rear)rearLenses.push(point[0]-.028,point[1],point[2],1,.24,.13);
         }
       }
     }
-    for(const child of node.children??[])visit(child,matrix,axle,group);
+    for(const child of node.children??[])visit(child,matrix,axle,group,heightOffset);
   }
   if(!textureOnly)for(const root of model.scenes[model.scene??0].nodes)visit(root,identity,null);
 
@@ -226,9 +265,20 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
     name,{body:geometry,...normalizeGeometry([...geometry.values()])}
   ]));
   const images=new Map();
+  const paintImages=new Map();
   try {
     await Promise.all(model.materials.map(async material=>{
       if((textureOnly&&material.name!==textureOnly)||omitMaterials.includes(material.name))return;
+      const finish=paint[material.name];
+      if(finish?.texture){
+        const response=await fetch(finish.texture,{signal});
+        if(!response.ok)throw new Error('Could not load replacement paint texture');
+        const bitmap=createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
+        paintImages.set(material.name,bitmap);
+        await bitmap;
+        return;
+      }
+      if(finish?.solid)return;
       const index=(material.pbrMetallicRoughness?.baseColorTexture??material.extensions?.KHR_materials_pbrSpecularGlossiness?.diffuseTexture)?.index;
       if(index===undefined||images.has(index))return;
       const image=model.images[model.textures[index].source];
@@ -239,20 +289,23 @@ export async function loadCarAsset({url,scale,lift=0,paint={},bakedWheels=false,
       await bitmap;
     }));
   }catch(error){
-    for(const bitmap of images.values())bitmap.then(image=>image.close(),()=>{});
+    for(const bitmap of [...images.values(),...paintImages.values()])bitmap.then(image=>image.close(),()=>{});
     throw error;
   }
   const materials=await Promise.all(model.materials.map(async material=>{
     const pbr=material.pbrMetallicRoughness??{};
     const specular=material.extensions?.KHR_materials_pbrSpecularGlossiness;
     const baseTexture=pbr.baseColorTexture??specular?.diffuseTexture;
+    const sampler=model.samplers?.[model.textures?.[baseTexture?.index]?.sampler];
+    const repeats=useTextureSamplers&&baseTexture&&(sampler?.wrapS??10497)===10497&&(sampler?.wrapT??10497)===10497;
     const glass=material.name?.includes('WindowFront')||material.name==='phong2'||material.name==='rphong1SG1'||material.name==='windows'||material.name==='glass'||material.name==='Material.004';
-    const tint=paint[material.name]??(glass?[.13,.21,.25]:(pbr.baseColorFactor??specular?.diffuseFactor??[1,1,1]).slice(0,3).map(channel=>channel**(1/2.2)));
+    const finish=paint[material.name];
+    const tint=(Array.isArray(finish)?finish:finish?.tint)??(glass?[.13,.21,.25]:(pbr.baseColorFactor??specular?.diffuseFactor??[1,1,1]).slice(0,3).map(channel=>channel**(1/2.2)));
     return {
-      name:material.name,tint,gloss:glass?.65:1-(pbr.roughnessFactor??1),
+      name:material.name,tint,gloss:finish?.gloss??(glass?.65:1-(pbr.roughnessFactor??1)),
       cutout:!glass&&(material.alphaMode==='BLEND'||material.alphaMode==='MASK'),
-      repeat:Boolean(pbr.baseColorTexture?.extensions?.KHR_texture_transform),
-      image:await images.get(baseTexture?.index)
+      repeat:Boolean(repeats)||repeatMaterials.includes(material.name)||Boolean(pbr.baseColorTexture?.extensions?.KHR_texture_transform),
+      image:finish?.solid?undefined:await (paintImages.get(material.name)??images.get(baseTexture?.index))
     };
   }));
   return {body,indexedParts,...dimensions,variants,collisionFaces,rearLenses,headLenses,redStrobe,blueStrobe,wheels:[...wheelGroups.values()],materials};

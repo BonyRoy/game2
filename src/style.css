@@ -124,7 +124,8 @@ kbd{background:#e7f0dc13;border:1px solid #e7f0dc2a;border-radius:4px;padding:2p
 @media(max-width:700px){.mode-card{padding:9px 11px}}
 .multiplayer-card{background:#20272be8;border-color:#82949b55}
 .multiplayer-card h2{color:#c1cdd0}
-.multiplayer-card .start:disabled{background:#39454b;color:#aebbc0;cursor:not-allowed}
+.player-list{margin:0 0 9px;padding:0;list-style:none;max-height:112px;overflow:auto;font-size:13px;line-height:1.55}
+.map-legend i.remote-marker{background:#77dcea}
 .phone-menu-button,.phone-menu-header{display:none}
 .mode-card .start svg:last-child{margin-left:0}
 @media(max-width:700px), (max-width:1100px) and (pointer:coarse){
@@ -217,10 +218,71 @@ kbd{background:#e7f0dc13;border:1px solid #e7f0dc2a;border-radius:4px;padding:2p
 .game-loading-card progress::-webkit-progress-value{background:var(--orange);border-radius:9px}
 .game-loading-card progress::-moz-progress-bar{background:var(--orange);border-radius:9px}
 .game-loading-card button{justify-self:start}
-.game-loading-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.game-loading-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.game-loading-actions button{justify-self:stretch;justify-content:center;margin-top:0;text-align:center;overflow-wrap:anywhere}
+.game-loading-actions button:only-child{grid-column:1/-1}
 .basic-graphics{padding:10px 13px;border:1px solid var(--border);border-radius:8px;background:#293f37}
 .basic-graphics:hover{background:#355146}
 .graphics-switch{font-size:12px;font-weight:700;line-height:1.2}
 .graphics-switch:disabled{cursor:progress;opacity:.8}
 .graphics-load-error{position:absolute;right:0;top:calc(100% + 8px);padding:8px 12px;color:var(--cream);font-size:12px}
 @media(max-width:560px){.landing-actions .graphics-switch{position:absolute;right:0;top:calc(100% + 8px);width:max-content;max-width:45vw}}
+
+@media(max-width:700px), (max-width:1100px) and (pointer:coarse){
+  .phone-game-menu[data-view=modes] .mission:has(.player-list){grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+.lan-round{position:absolute;top:76px;left:50%;transform:translateX(-50%);padding:8px 12px;min-width:158px;text-align:center;pointer-events:none;font-size:13px}
+.lan-round p{margin:3px 0;color:var(--cream)}
+.lan-round label{display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px}
+.lan-round progress{width:74px;accent-color:#ff746e}
+.lan-round-actions{margin:8px 0}
+.lan-round-actions .start:disabled{opacity:.55;cursor:default}
+.map-legend i.officer-marker{background:#ff746e}
+@media(max-width:700px), (max-width:1100px) and (pointer:coarse){
+  .lan-round{
+    top:calc(clamp(14px,3.1vh,34px) + 52px);
+    left:auto;
+    right:max(clamp(14px,3vw,45px),env(safe-area-inset-right));
+    transform:none;
+    display:flex;
+    align-items:center;
+    gap:7px;
+    min-width:0;
+    padding:5px 8px;
+    border-radius:8px;
+    font-size:11px;
+    line-height:1.2;
+  }
+  .lan-round p{margin:0;font-variant-numeric:tabular-nums}
+  .lan-round-objective{display:none}
+  .lan-round progress{width:42px;height:6px}
+  .shell:has(.phone-game-menu[data-view=modes]) .lan-round{visibility:hidden}
+}
+
+@media(max-width:700px){
+  .lan-round{top:calc(clamp(14px,3.1vh,34px) + 94px)}
+}
+
+.lan-room{display:grid;gap:8px;margin:8px 0;padding:8px 0;border-block:1px solid var(--border)}
+.lan-room h3{font-size:14px;margin:0}
+.lan-room label{display:grid;gap:4px;font-size:13px}
+.lan-room select{font:inherit;color:inherit;background:#263c35;border:1px solid var(--border);border-radius:6px;padding:6px}
+.lan-room .square,.online-list .square,.lan-invitations .square{width:auto;height:auto;padding:6px 8px;font-size:12px}
+.lan-room .start{margin-top:0}
+.lan-room button:disabled,.multiplayer-card button:disabled{opacity:.55;cursor:default}
+.online-list{margin-top:10px}
+.online-list li{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:26px}
+.lan-invitations{position:absolute;z-index:3;top:84px;right:clamp(10px,3vw,45px);width:min(272px,calc(100% - 20px));max-height:36%;overflow:auto;padding:10px 12px;font-size:13px}
+.lan-invitations>div+div{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.lan-invitations p{margin:0 0 6px}
+.lan-invitation-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.lan-invitation-actions button{display:flex;justify-content:center;align-items:center;width:100%;margin:0}
+
+@media (any-pointer:coarse){
+  .shell{
+    -webkit-user-select:none;
+    user-select:none;
+    -webkit-touch-callout:none;
+  }
+}

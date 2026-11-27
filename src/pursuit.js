@@ -10,7 +10,7 @@ const waveInterval=10000;
 const speedStep=2/KMH_PER_SPEED_UNIT;
 const maximumPatrolSpeed=CAR_TOP_SPEED-speedStep;
 
-export function patrolSpeedLimit(index,wave){
+function patrolSpeedLimit(index,wave){
   const base=patrolLimits[index%patrolLimits.length];
   return Math.min(maximumPatrolSpeed,base+wave*speedStep);
 }

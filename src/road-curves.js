@@ -1,5 +1,5 @@
 // Round the centerline with quadratic bends while keeping junctions within the paved width.
-export function roundRoad(points,closed=false){
+export function roundRoad(points,closed=false,cornerTrim=()=>76){
   const path=points.filter(([x,y],i)=>i===0||x!==points[i-1][0]||y!==points[i-1][1]);
   if(path.length<3)return path;
   if(closed&&path[0][0]===path.at(-1)[0]&&path[0][1]===path.at(-1)[1])path.pop();
@@ -21,7 +21,8 @@ export function roundRoad(points,closed=false){
       rounded.push(corner);
       continue;
     }
-    const trim=Math.min(76,incoming*.28,outgoing*.28,94/turn);
+    const limit=cornerTrim(x,y);
+    const trim=Math.min(limit,incoming*.28,outgoing*.28,(94*limit/76)/turn);
     const start=[x-ux*trim,y-uy*trim],end=[x+vx*trim,y+vy*trim];
     for(let j=0;j<=6;j++){
       const t=j/6,inv=1-t;

@@ -1,15 +1,18 @@
+import {FROSTPINE_MOUNTAIN} from './frostpine-mountain';
+import {COPPER_BUILDINGS,COPPER_SHORE,copperShoreRange,COPPER_CITY_ORIGIN,COPPER_CITY_SCALE,COPPER_GATE_WIDTH,COPPER_CITY_ROTATION,COPPER_DISTRICTS,COPPER_AVENUES,COPPER_CONNECTORS,inCopperDistrict} from './copper-island';
+import {CITY,CITY_BRIDGE,CITY_APPROACHES,CITY_DISTRICTS,CITY_HALF_SIZE,CITY_LINKS,cityCoastRows,BEACH_KIT_NODES,BEACH_KIT_SIZES,harborBeachLayout,isCityBridge,isCityLand} from './city-island';
 import {projectBridge} from './bridge-asset';
 import {sceneryFiles,sceneryAssetConfig} from './scenery-assets';
 import {loadCarAsset} from './car-asset';
 import {POLICE_PAINT} from './pursuit';
 import {daylight} from './lighting';
 import {CARS,POLICE_ASSET} from './cars';
-import {SIZE,WORLD_WIDTH,WORLD_HEIGHT,bridges,bridgeHeight,desertHalfWidth,snowHalfWidth,isSnow,isDesert,isRoad,shore,routes,roadWidth,sidewalkWidth,overlapsSidewalk,buildings,breakableScenery,groundHeight,isPalm,stadiums,stadiumDistance,stadiumDriveLayout,lighthouse,basicTowerLot,sceneryRadius,fallenSceneryPose} from './world';
+import {SIZE,WORLD_WIDTH,WORLD_HEIGHT,JUNIPER_ROWS,bridges,bridgeHeight,DESERT_CENTER,copperTerrainHeight,snowHalfWidth,isSnow,isDesert,isRoad,juniperShoreRange,routes,roadWidth,sidewalkWidth,overlapsSidewalk,buildings,breakableScenery,groundHeight,isPalm,stadiums,stadiumDriveLayout,lighthouse,basicTowerLot,sceneryRadius,fallenSceneryPose,CAR_AXLES,carGroundPose,isCityApproach} from './world';
 
 const colors = new Map();
 const sunDirection=[.65,.70,-.30];
 const trafficLightLimit=4;
-const material={world:0,terrain:1,pavement:2,vehicle:3,sky:4,contactShadow:5,streetShadow:6,rearLens:7,rearGlow:8,importedCar:9,lanternGlow:10,foliageBake:11,foliageCard:12,importedBuilding:13,grassTerrain:14,asphalt:15};
+const material={world:0,terrain:1,pavement:2,vehicle:3,sky:4,contactShadow:5,streetShadow:6,rearLens:7,rearGlow:8,importedCar:9,lanternGlow:10,foliageBake:11,foliageCard:12,importedBuilding:13,grassTerrain:14,asphalt:15,ocean:16,sand:17,snow:18};
 function rgb(hex){
   if(!colors.has(hex)){
     colors.set(hex,[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255));
@@ -33,10 +36,12 @@ class Mesh {
   plane(x,z,w,d,y,color){
     this.quad([x,y,z],[x+w,y,z],[x+w,y,z+d],[x,y,z+d],color);
   }
-  box(x,z,w,d,bottom,top,color){
+  box(x,z,w,d,bottom,top,color,angle=0){
     const l=x-w/2,r=x+w/2,n=z-d/2,s=z+d/2;
-    const a=[l,top,n],b=[r,top,n],c=[r,top,s],e=[l,top,s];
-    const f=[l,bottom,n],g=[r,bottom,n],h=[r,bottom,s],i=[l,bottom,s];
+    const cs=Math.cos(angle),sn=Math.sin(angle);
+    const point=(px,y,pz)=>angle?[x+(px-x)*cs-(pz-z)*sn,y,z+(px-x)*sn+(pz-z)*cs]:[px,y,pz];
+    const a=point(l,top,n),b=point(r,top,n),c=point(r,top,s),e=point(l,top,s);
+    const f=point(l,bottom,n),g=point(r,bottom,n),h=point(r,bottom,s),i=point(l,bottom,s);
     this.quad(a,b,c,e,color,1);
     this.quad(a,b,g,f,color,.85);
     this.quad(b,c,h,g,color,.66);
@@ -63,98 +68,132 @@ class Mesh {
   }
 }
 
-function terrain(mesh,grass){
-  mesh.plane(-1500,-1500,WORLD_WIDTH+3000,WORLD_HEIGHT+3000,-.5,'#468c99');
-  const step=29;
+function fitFrostpineMountain(parts,span){
+  const {west,east,north,south}=FROSTPINE_MOUNTAIN;
+  const divisions=128,columns=divisions+1;
+  const heights=Float32Array.from({length:columns**2},(_,i)=>
+    groundHeight(west+(east-west)*(i%columns)/divisions,north+(south-north)*Math.floor(i/columns)/divisions));
+  return parts.flatMap(part=>{
+    const {vertices,elements}=part;
+    for(let i=0;i<vertices.length;i+=9){
+      const u=Math.max(0,Math.min(divisions-.0001,(vertices[i]/span[0]+.5)*divisions));
+      const v=Math.max(0,Math.min(divisions-.0001,(vertices[i+2]/span[1]+.5)*divisions));
+      const col=Math.floor(u),row=Math.floor(v),tx=u-col,tz=v-row,cell=row*columns+col;
+      const h0=heights[cell]+(heights[cell+1]-heights[cell])*tx;
+      const h1=heights[cell+columns]+(heights[cell+columns+1]-heights[cell+columns])*tx;
+      vertices[i]=west+(east-west)*u/divisions;
+      vertices[i+1]=h0+(h1-h0)*tz;
+      vertices[i+2]=north+(south-north)*v/divisions;
+    }
+    const visible=[];
+    for(let i=0;i<elements.length;i+=3){
+      const a=elements[i],b=elements[i+1],c=elements[i+2];
+      if(vertices[a*9+1]>18&&vertices[b*9+1]>18&&vertices[c*9+1]>18)visible.push(a,b,c);
+    }
+    return visible.length?[{...part,elements:new elements.constructor(visible)}]:[];
+  });
+}
+
+function terrain(mesh,grass,ocean,sandGround,snowGround,showCity){
+  ocean.plane(-1500,-1500,WORLD_WIDTH+3000,WORLD_HEIGHT+3000,-.5,'#468c99');
+  const step=26;
   const landRow=z=>{
-    const edge=shore(z)-42;
-    return Array.from({length:Math.ceil(edge/step)+2},(_,i)=>{
-      const x=Math.min(i*step,edge);
+    const [west,east]=juniperShoreRange(z);
+    const beach=Math.min(40,(east-west)/2);
+    return Array.from({length:161},(_,i)=>{
+      const x=west+beach+(east-west-2*beach)*i/160;
       return [x,groundHeight(x,z),z];
     });
   };
-  let row=landRow(-600);
-  for(let z=-600;z<SIZE;z+=step){
-    const next=landRow(Math.min(z+step,SIZE));
-    const first=row.at(-1),last=next.at(-1);
-    mesh.quad([-1600,0,z],row[0],next[0],[-1600,0,z+step],'#74835a');
-    for(let i=0;i<Math.max(row.length,next.length)-2;i++){
-      const a=row[i]??first,b=row[i+1]??first,c=next[i+1]??last,d=next[i]??last;
+  let row=landRow(0);
+  for(let z=0;z<SIZE;z+=step){
+    const nextZ=Math.min(z+step,SIZE),next=landRow(nextZ);
+    for(let i=0;i<row.length-1;i++){
+      const a=row[i],b=row[i+1],c=next[i+1],d=next[i];
       const slope=(a[1]-c[1])*.012+(d[1]-b[1])*.009;
       grass.quad(a,b,c,d,'#818c63',Math.max(.81,Math.min(1.13,1+slope)));
     }
-    const a=shore(z),b=shore(z+step);
-    mesh.quad([a-42,0,z],[a+7,0,z],[b+7,0,z+step],[b-42,0,z+step],'#e9c99c');
-    mesh.quad([a+7,-.2,z],[a+63,-.2,z],[b+63,-.2,z+step],[b+7,-.2,z+step],'#69aba4');
-    mesh.strip(a+9,z,b+9,z+step,1.5,.03,'#d7e2c6');
+    const banks=juniperShoreRange(z),nextBanks=juniperShoreRange(nextZ);
+    for(const side of [0,1]){
+      const sign=side===0?-1:1;
+      const i=side===0?0:row.length-1;
+      const a=[banks[side],0,z],b=[nextBanks[side],0,nextZ];
+      sandGround.quad(row[i],a,b,next[i],'#e9c99c');
+      mesh.quad(a,[a[0]+sign*48,-.3,z],[b[0]+sign*48,-.3,nextZ],b,'#69aba4');
+    }
     row=next;
   }
-  const desertRow=z=>Array.from({length:125},(_,i)=>{
-    const x=8000+desertHalfWidth(z)*(i/62-1);
-    return [x,groundHeight(x,z),z];
-  });
-  let sand=desertRow(140);
-  for(let z=140;z<5060;z+=30){
-    const next=desertRow(Math.min(z+30,5060));
+  const desertRow=z=>{
+    const [left,right]=copperShoreRange(z);
+    return Array.from({length:281},(_,i)=>{
+      const x=left+(right-left)*i/280;
+      return [x,copperTerrainHeight(x,z),z];
+    });
+  };
+  let sand=desertRow(COPPER_SHORE.north);
+  for(let z=COPPER_SHORE.north;z<COPPER_SHORE.south;z+=30){
+    const next=desertRow(Math.min(z+30,COPPER_SHORE.south));
     for(let i=0;i<sand.length-1;i++){
       const a=sand[i],b=sand[i+1],c=next[i+1],d=next[i];
       const shade=Math.max(.78,Math.min(1.18,1+(a[1]-c[1])*.014));
-      mesh.quad(a,b,c,d,'#c89e6b',shade);
+      sandGround.quad(a,b,c,d,'#c89e6b',shade);
     }
     sand=next;
   }
-  const snowRow=z=>Array.from({length:145},(_,i)=>{
-    const x=5500+snowHalfWidth(z)*(i/72-1);
-    return [x,groundHeight(x,z),z];
+  const snowRow=z=>Array.from({length:241},(_,i)=>{
+    const x=5500+snowHalfWidth(z)*(i/120-1);
+    return [x,groundHeight(x,z,showCity),z];
   });
   let ice=snowRow(5610);
-  for(let z=5610;z<8510;z+=29){
-    const next=snowRow(Math.min(z+29,8510));
+  for(let z=5610;z<8510;z+=17){
+    const next=snowRow(Math.min(z+17,8510));
     for(let i=0;i<ice.length-1;i++){
       const a=ice[i],b=ice[i+1],c=next[i+1],d=next[i];
       const slope=Math.max(.78,Math.min(1.05,1+(a[1]-c[1])*.012));
-      mesh.quad(a,b,c,d,'#c5d8df',slope);
+      snowGround.quad(a,b,c,d,'#c5d8df',slope);
     }
     ice=next;
   }
-  for(let i=0;i<21;i++){
-    const z=-450+i*220;
-    const height=120+60*Math.sin(i*1.3)+i%3*24;
-    const a=[-700,height,z],b=[-680,125+62*Math.sin((i+1)*1.3)+(i+1)%3*24,z+220];
-    const c=[-185,0,z+220],d=[-200,0,z];
-    const mid=[-384,height*.39,z+91];
-    mesh.triangle(a,b,mid,'#718b74');
-    mesh.triangle(a,mid,d,'#607f69');
-    mesh.triangle(b,c,mid,'#698b72');
-    mesh.triangle(d,mid,c,'#789179');
-  }
   for(let i=0;i<225;i++){
-    const z=(i*97)%SIZE,x=shore(z)+32+(i*103)%650;
+    const z=(i*97)%SIZE,x=juniperShoreRange(z)[1]+32+(i*103)%650;
     mesh.strip(x,z,x+8+i%20,z+.2,1.2,-.1,i%3?'#74a6aa':'#acd0c5');
   }
 }
 
-function streets(mesh,asphalt){
-  for(const [surface,width,y,tint] of [[mesh,sidewalkWidth,.06,'#b5aa9d'],[asphalt,roadWidth,.12,'#474c52']]){
-    for(const route of routes){
-      route.forEach(([x,z],i)=>{
-        surface.disc(x,z,width/2,y,tint);
-        if(i)surface.strip(...route[i-1],x,z,width,y,tint);
-      });
-    }
-  }
-  for(const route of routes){
+const copperConnectorByPath=new Map(COPPER_CONNECTORS.map(connector=>[connector.path,connector]));
+
+function streets(mesh,asphalt,paths,includeCrosswalks=false){
+  for(const route of paths){
+    const connector=copperConnectorByPath.get(route);
     const directions=route.slice(1).map(([x,z],i)=>{
       const [ax,az]=route[i];
       const length=Math.hypot(x-ax,z-az);
       return {dx:(x-ax)/length,dz:(z-az)/length,length};
     });
+    if(!directions.length)continue;
     const length=directions.reduce((sum,part)=>sum+part.length,0);
     const offsets=route.map((_,i)=>{
       const previous=directions[Math.max(0,i-1)],next=directions[Math.min(i,directions.length-1)];
       const divisor=Math.max(.5,1+previous.dx*next.dx+previous.dz*next.dz);
       return [(previous.dz+next.dz)/divisor,-(previous.dx+next.dx)/divisor];
     });
+    for(const [surface,width,profile,y,tint] of [
+      [mesh,sidewalkWidth,connector?.sidewalk,.06,'#b5aa9d'],
+      [asphalt,roadWidth,connector?.width,.12,'#474c52']
+    ]){
+      if(!profile){
+        route.forEach(([x,z],i)=>{
+          surface.disc(x,z,width/2,y,tint);
+          if(i)surface.strip(...route[i-1],x,z,width,y,tint);
+        });
+        continue;
+      }
+      const edge=(i,side)=>{
+        const [x,z]=route[i],[nx,nz]=offsets[i];
+        return [x+nx*profile[i]*side/2,y,z+nz*profile[i]*side/2];
+      };
+      for(let i=1;i<route.length;i++)surface.quad(edge(i-1,-1),edge(i,-1),edge(i,1),edge(i-1,1),tint);
+    }
     let progress=0;
     for(const [i,{dx,dz,length:segment}] of directions.entries()){
       const [ax,az]=route[i];
@@ -165,25 +204,28 @@ function streets(mesh,asphalt){
           const from=Math.max(left,dash-progress),to=Math.min(right,dash+11-progress);
           if(from<to)mesh.strip(ax+dx*from,az+dz*from,ax+dx*to,az+dz*to,.95,.15,'#e8c57f');
         }
-        const stripe=(center,width,y,color)=>{
-          const point=(distance,offset)=>{
+        const stripe=(side,inset,width,y,color)=>{
+          const point=(distance,edge)=>{
             const t=distance/segment;
+            const profile=connector?.width;
+            const pavedWidth=profile?profile[i]+(profile[i+1]-profile[i])*t:roadWidth;
+            const offset=side*(pavedWidth/2+inset)+edge;
             const ox=offsets[i][0]*(1-t)+offsets[i+1][0]*t;
             const oz=offsets[i][1]*(1-t)+offsets[i+1][1]*t;
             return [ax+dx*distance+ox*offset,y,az+dz*distance+oz*offset];
           };
-          mesh.quad(point(left,center-width/2),point(right,center-width/2),
-            point(right,center+width/2),point(left,center+width/2),color);
+          mesh.quad(point(left,-width/2),point(right,-width/2),
+            point(right,width/2),point(left,width/2),color);
         };
         for(const side of [-1,1]){
-          stripe(side*(roadWidth/2+.45),1,.145,'#d2c8b9');
-          stripe(side*(roadWidth/2-3),.52,.16,'#ddd1ad');
+          stripe(side,.45,1,.145,'#d2c8b9');
+          stripe(side,-3,.52,.16,'#ddd1ad');
         }
       }
       progress+=segment;
     }
   }
-  for(const z of [1962,2039]){
+  if(includeCrosswalks)for(const row of JUNIPER_ROWS)for(const z of [row-47,row+47]){
     for(let x=1742;x<=1795;x+=6)mesh.plane(x,z,3.3,5,.19,'#cbc8b8');
   }
 }
@@ -233,7 +275,7 @@ function boulevardDetails(mesh,decorations,fallbacks){
   }
 }
 
-function straitBridge(mesh,span){
+function straitBridge(mesh,span,paintDeck=true){
   const {west,east,y,width,vertical}=span;
   const height=x=>bridgeHeight(x,span);
   mesh.swapAxes=vertical;
@@ -244,7 +286,7 @@ function straitBridge(mesh,span){
   }
   for(let x=west;x<east;x+=20){
     const end=Math.min(x+20,east);
-    band(x,end,0,width,.2,'#505658');
+    if(paintDeck)band(x,end,0,width,.2,'#505658');
     for(const side of [-1,1]){
       const offset=side*(width/2-2);
       band(x,end,offset,4,3.2,'#bdc4bd');
@@ -253,9 +295,11 @@ function straitBridge(mesh,span){
         mesh.quad([x,height(x)-1,z],[end,height(end)-1,z],
           [end,height(end)+3.2,z],[x,height(x)+3.2,z],'#9ba9a4');
       }
-      band(x,end,side*(width/2-6),.95,.24,'#d9dacf');
-      band(x,Math.min(x+9,end),side*31,.88,.24,'#e6e1d0');
-      band(x,end,side*.9,.65,.24,'#f1bf66');
+      if(paintDeck){
+        band(x,end,side*(width/2-6),.95,.24,'#d9dacf');
+        band(x,Math.min(x+9,end),side*31,.88,.24,'#e6e1d0');
+        band(x,end,side*.9,.65,.24,'#f1bf66');
+      }
     }
   }
   for(let x=west+160;x<east-100;x+=110){
@@ -274,23 +318,76 @@ function straitBridge(mesh,span){
   mesh.swapAxes=false;
 }
 
-function desertScenery(mesh){
-  for(let i=0;i<690;i++){
-    const x=5530+(i*173.79)%4950,z=170+(i*109.61)%4890;
-    const footprint=i%3===0?2.2:2+i%6;
-    if(!isDesert(x,z)||stadiumDistance(x,z)<10||isRoad(x,z)||overlapsSidewalk(x,z,footprint)||buildings.some(b=>Math.abs(b.x-x)<38&&Math.abs(b.y-z)<38))continue;
-    mesh.base=groundHeight(x,z);
-    if(mesh.base<.8)continue;
-    if(i%3===0){
-      const h=4+i%7;
-      branch(mesh,[x,0,z],[x,h,z],.55,.48,'#507057');
-      for(const side of [-1,1]){
-        branch(mesh,[x,h*.46,z],[x+side*1.6,h*.54,z],.36,.3,'#507057');
-        branch(mesh,[x+side*1.6,h*.54,z],[x+side*1.8,h*.8,z],.3,.24,'#5d7757');
+function harborRoadVertices(){
+  const vertices=[];
+  const {west,east,y,width}=CITY_BRIDGE;
+  const start=CITY_APPROACHES[0][0][0];
+  const end=CITY.x-515;
+  const halfWidth=x=>{
+    const blend=Math.max(0,1-Math.max((west-x)/85,(x-east)/(end-east),0));
+    return (68+(width-68)*blend)/2;
+  };
+  const point=(x,side)=>{
+    const slope=(bridgeHeight(x+1,CITY_BRIDGE)-bridgeHeight(x-1,CITY_BRIDGE))/2;
+    return [x,bridgeHeight(x,CITY_BRIDGE)+.065,y+side*halfWidth(x),(x-end)/117,(side+1)/2,0,-slope,1,0];
+  };
+  const sections=[start,west-85,west,east,end];
+  for(let i=1;i<sections.length;i++){
+    const limit=sections[i];
+    for(let x=sections[i-1];x<limit;x+=12){
+      const next=Math.min(x+12,limit);
+      const a=point(x,-1),b=point(next,-1),c=point(next,1),d=point(x,1);
+      vertices.push(...a,...b,...c,...a,...c,...d);
+    }
+  }
+  for(const [[ax,ay],[bx,by]] of CITY_LINKS){
+    const length=Math.hypot(bx-ax,by-ay);
+    const dx=(bx-ax)/length,dz=(by-ay)/length;
+    const corner=(along,side)=>[ax+dx*along-dz*side*34,.065,ay+dz*along+dx*side*34,
+      along/117,(side+1)/2,0,0,1,0];
+    const a=corner(0,-1),b=corner(length,-1),c=corner(length,1),d=corner(0,1);
+    vertices.push(...a,...b,...c,...a,...c,...d);
+  }
+  return new Float32Array(vertices);
+}
+
+function harborBeach(mesh){
+  const bands=[
+    {inset:0,height:-.47,color:'#9d9471'},
+    {inset:12,height:-.29,color:'#bfaa7a'},
+    {inset:32,height:-.18,color:'#d6bd89'}
+  ].map(band=>({...band,rows:cityCoastRows(band.inset).map(([z,west,east])=>[
+    [west,band.height,z],[east,band.height,z]
+  ])}));
+  for(let layer=1;layer<bands.length;layer++){
+    const outer=bands[layer-1],inner=bands[layer];
+    for(let i=1;i<outer.rows.length;i++){
+      for(const side of [0,1]){
+        mesh.quad(outer.rows[i-1][side],outer.rows[i][side],inner.rows[i][side],inner.rows[i-1][side],outer.color);
       }
-    }else{
-      const r=footprint;
-      crown(mesh,x,.8,z,r,r*.49,r*.68,i%2?'#a46e4e':'#b58a62',i);
+    }
+    for(const row of [0,outer.rows.length-1]){
+      mesh.quad(...outer.rows[row],...inner.rows[row].slice().reverse(),outer.color);
+    }
+  }
+  const inland=bands.at(-1);
+  for(let i=1;i<inland.rows.length;i++){
+    mesh.quad(...inland.rows[i-1],...inland.rows[i].slice().reverse(),inland.color);
+  }
+}
+
+function desertScenery(mesh){
+  for(let i=0;i<1120;i++){
+    const x=COPPER_SHORE.west+(i*173.79)%(COPPER_SHORE.east-COPPER_SHORE.west);
+    const z=COPPER_SHORE.north+(i*103.61)%(COPPER_SHORE.south-COPPER_SHORE.north);
+    if(!isDesert(x,z)||inCopperDistrict(x,z,30)||isRoad(x,z)||overlapsSidewalk(x,z,12))continue;
+    mesh.base=copperTerrainHeight(x,z);
+    const h=5+i%10,color=i%2?'#59784f':'#4a6c4c';
+    branch(mesh,[x,0,z],[x,h,z],.64,.45,color);
+    for(const side of [-1,1]){
+      const arm=1.5+(i%4)*.25;
+      branch(mesh,[x,h*.37,z],[x+side*arm,h*.47,z],.34,.30,color);
+      branch(mesh,[x+side*arm,h*.47,z],[x+side*arm,h*(side===1?.78:.66),z],.30,.20,color);
     }
   }
   mesh.base=0;
@@ -596,7 +693,8 @@ function roadside(mesh){
   const random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/2**32);
   for(let i=0;i<7900;i++){
     const x=random()*SIZE,z=random()*SIZE;
-    if(x>shore(z)-47||buildings.some(b=>Math.abs(x-b.x)<b.w/2+7&&Math.abs(z-b.y)<b.d/2+7))continue;
+    const banks=juniperShoreRange(z);
+    if(!banks||x<banks[0]+47||x>banks[1]-47||buildings.some(b=>Math.abs(x-b.x)<b.w/2+7&&Math.abs(z-b.y)<b.d/2+7))continue;
     const elevation=groundHeight(x,z);
     if(elevation<.28)continue;
     mesh.base=elevation-.15;
@@ -618,7 +716,7 @@ function roadside(mesh){
 }
 
 export const WHEEL_RADIUS=2.75;
-const axles=[-10,9.7];
+const axles=CAR_AXLES;
 const track=4.93;
 
 function makeShadow(){
@@ -881,7 +979,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
     ${derivatives?"#extension GL_OES_standard_derivatives : enable":""}
     precision ${fragmentPrecision} float;
     uniform vec3 haze;
-    uniform float material, dusk, night, lamps, emissive;
+    uniform float material, dusk, night, lamps, emissive, waterTime;
     uniform vec3 eye;
     uniform vec3 skyTop, assetTint;
     uniform float assetGloss,assetCutout,assetRepeat,windowGlass;
@@ -1016,6 +1114,26 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         grass=mix(grass*1.37,tint,.20)*contour;
         base=grass*variation*(ambient+sunlight*directional);
       }
+      if(material==${material.ocean}.0){
+        vec2 waves=worldPosition.xz/380.0;
+        vec3 a=texture2D(assetTexture,waves+vec2(waterTime*.028,waterTime*.013)).rgb;
+        vec3 b=texture2D(assetTexture,waves.yx*.62+vec2(-waterTime*.017,waterTime*.009)).rgb;
+        vec3 water=mix(a,b,.35)*vec3(.9,1.03,1.06);
+        base=mix(water*1.12,water*.27,night);
+        base=mix(base,haze,.20*pow(1.0-abs(view.y),3.0));
+      }
+      if(material==${material.sand}.0||material==${material.snow}.0){
+        bool snow=material==${material.snow}.0;
+        vec2 position=worldPosition.xz;
+        vec2 rotated=vec2(dot(position,vec2(.8,.6)),dot(position,vec2(-.6,.8)));
+        float size=snow?118.0:72.0;
+        vec3 fine=texture2D(assetTexture,position/size).rgb;
+        vec3 broad=texture2D(assetTexture,rotated/(size*2.7)).rgb;
+        vec3 detail=mix(fine,broad,.34);
+        vec3 balance=snow?vec3(1.54,1.41,1.23):vec3(1.12,1.03,.89);
+        float grain=snow?1.0:1.0+(noise(position*1.6)-.5)*.18+(noise(position*.11)-.5)*.23;
+        base=mix(tint,detail*balance,.67)*grain*(ambient+sunlight*directional);
+      }
       float glass=step(tint.r+0.065,tint.b)*step(tint.r+0.035,tint.g);
       if(material==${material.vehicle}.0 || (material==${material.world}.0 && glass>0.0)){
         vec3 reflection=reflect(-view,normal);
@@ -1025,11 +1143,11 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
           vec3 sky=skyColor(reflection);
           reflected=mix(vec3(0.17,0.22,0.25),sky,smoothstep(-0.36,0.36,reflection.y));
         }
-        float strength=material==${material.vehicle}.0?mix(0.08,0.26,glass):0.12;
+        float strength=material==${material.vehicle}.0?mix(0.08*assetGloss,0.26,glass):0.12;
         base=mix(base,reflected,strength*(0.36+0.64*fresnel)*(1.0-night*0.65));
         if(material==${material.vehicle}.0){
           vec3 halfway=normalize(view+normalize(vec3(${sunDirection.join(",")})));
-          base+=vec3(1.0,0.89,0.74)*pow(max(0.0,dot(normal,halfway)),14.0)*0.33*(1.0-night);
+          base+=vec3(1.0,0.89,0.74)*pow(max(0.0,dot(normal,halfway)),14.0)*0.33*assetGloss*(1.0-night);
         }
       }
       if(material==${material.foliageBake}.0||material==${material.foliageCard}.0){
@@ -1128,7 +1246,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
   gl.useProgram(program);
   gl.enable(gl.DEPTH_TEST);
-  const uniforms=Object.fromEntries('eye right up forward origin turn spin aspect zoom meshScale haze skyTop material smokeScale dusk night lamps emissive headlightOrigin headlightDirection trafficHeadlights[0] trafficLightHeights trafficLightCount assetTint assetGloss assetTexture assetCutout assetRepeat windowGlass'.split(' ').map(name=>[name,gl.getUniformLocation(program,name)]));
+  const uniforms=Object.fromEntries('eye right up forward origin turn spin aspect zoom meshScale haze skyTop material smokeScale dusk night lamps emissive waterTime headlightOrigin headlightDirection trafficHeadlights[0] trafficLightHeights trafficLightCount assetTint assetGloss assetTexture assetCutout assetRepeat windowGlass'.split(' ').map(name=>[name,gl.getUniformLocation(program,name)]));
   const attributes=['position','color'].map(name=>gl.getAttribLocation(program,name));
   attributes.forEach(attribute=>gl.enableVertexAttribArray(attribute));
   const normalAttribute=gl.getAttribLocation(program,'modelNormal');
@@ -1146,13 +1264,37 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
   }
 
   const atmosphere=buildMesh(mesh=>mesh.box(0,0,1200,1200,-600,600,'#ffffff'));
-  const grassTerrain=new Mesh();
-  const landscape=buildMesh(mesh=>terrain(mesh,grassTerrain));
+  const grassTerrain=new Mesh(),oceanTerrain=new Mesh(),sandTerrain=new Mesh(),snowTerrain=new Mesh();
+  const landscape=buildMesh(mesh=>terrain(mesh,grassTerrain,oceanTerrain,sandTerrain,snowTerrain,!basic));
+  if(!basic)harborBeach(sandTerrain);
   const juniperGround=upload(grassTerrain);
+  const terrainSurfaces=[
+    {name:'ocean',mesh:upload(oceanTerrain),mode:material.ocean},
+    {name:'sand',mesh:upload(sandTerrain),mode:material.sand},
+    {name:'snow',mesh:upload(snowTerrain),mode:material.snow}
+  ];
   const juniperGrass={};
-  const roadSurface=new Mesh();
-  const pavement=buildMesh(mesh=>streets(mesh,roadSurface));
-  const asphalt=upload(roadSurface);
+  const copperRoutes=routes.filter(route=>route.every(([x,y])=>isDesert(x,y)));
+  const roadSurface=new Mesh(),copperRoadSurface=new Mesh();
+  const pavement=buildMesh(mesh=>{
+    streets(mesh,roadSurface,routes.filter(route=>!copperRoutes.includes(route)),true);
+    streets(mesh,copperRoadSurface,copperRoutes);
+    for(const {x,y,w,d,snow,frontage} of buildings){
+      if(!frontage)continue;
+      const {curbX,curbY,horizontal}=frontage;
+      const paving=snow?'#a8afb3':'#aaa498';
+      if(horizontal){
+        const edge=curbY+Math.sign(y-curbY)*(sidewalkWidth/2-1);
+        const far=y+Math.sign(y-curbY)*(d/2+4);
+        mesh.plane(x-w/2-4,Math.min(edge,far),w+8,Math.abs(far-edge),.072,paving);
+      }else{
+        const edge=curbX+Math.sign(x-curbX)*(sidewalkWidth/2-1);
+        const far=x+Math.sign(x-curbX)*(w/2+4);
+        mesh.plane(Math.min(edge,far),y-d/2-4,Math.abs(far-edge),d+8,.072,paving);
+      }
+    }
+  });
+  const asphalt=upload(roadSurface),copperAsphalt=upload(copperRoadSurface);
   const windowLights=new Mesh();
   const shadowGeometry=new Mesh();
   const decorations=[];
@@ -1167,7 +1309,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
     stadium:'metasiberia_stadium__football_arena'
   };
   const buildingPlacements=basic?[]:buildings.filter(lot=>lot.importedTower).map(lot=>({
-    lot,kind:lot.model??'tower',angle:Math.PI/2
+    lot,kind:lot.model??'tower',angle:lot.angle??Math.PI/2
   }));
   if(!basic){
     buildingPlacements.push({lot:lighthouse,kind:'lighthouse',angle:0});
@@ -1207,16 +1349,16 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
   }):null;
   const shadowRanges=new Map();
   for(const item of breakableScenery){
-    if(!item.streetPalm&&!item.streetlight)continue;
+    if(!item.streetPalm&&!item.streetlight||!basic&&isCityApproach(item.x,item.y,46))continue;
     const caster=new Mesh();
-    caster.base=groundHeight(item.x,item.y);
+    caster.base=groundHeight(item.x,item.y,!basic);
     sceneryGeometry(caster,item);
     const start=shadowGeometry.vertices.length/6;
     projectStreetShadow(caster,shadowGeometry);
     shadowRanges.set(item,{start,end:shadowGeometry.vertices.length/6});
   }
-  const placedTrees=breakableScenery.map(item=>({item,kind:sceneryKind(item),
-    angle:item.phase??(item.shade??0)*6.28,y:groundHeight(item.x,item.y)}));
+  const placedTrees=breakableScenery.filter(item=>basic||!isCityApproach(item.x,item.y,46)).map(item=>({item,kind:sceneryKind(item),
+    angle:item.phase??(item.shade??0)*6.28,y:groundHeight(item.x,item.y,!basic)}));
   const detailedBroadleaf=new Set(placedTrees.filter(tree=>tree.kind==='broadleaf')
     .sort((a,b)=>(a.item.x-1770)**2+(a.item.y-2000)**2-(b.item.x-1770)**2-(b.item.y-2000)**2)
     .slice(0,4).map(tree=>tree.item));
@@ -1244,15 +1386,40 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         headlights.box(17.16,z,.05,2.45,5.38,5.57,'#eaf7ff');
       }else headlights.box(16.86,z,.04,2.16,3.94,4.64,'#fff5cb');
     }
-    const body=makeCar(model);
+    const body=uploadScaled(makeCar(model));
+    body.gloss=model.gloss??1;
     const {lenses,glow}=rearLamps();
-    return {length,width,wheel:upload(makeWheel(model.alloy)),body:uploadScaled(body),
+    return {length,width,wheel:upload(makeWheel(model.alloy)),body,
       rearLenses:uploadScaled(lenses),rearGlow:uploadScaled(glow),
       headlights:uploadScaled(headlights),shadow:uploadScaled(makeShadow())};
   });
   const assetBuffers=[],assetTextures=new Set();
   let destroyed=false;
   const assetRequests=new AbortController();
+  const terrainTextures=Promise.all(terrainSurfaces.map(async surface=>{
+    try{
+      const url=`${import.meta.env.BASE_URL}3js%20/scenery/${surface.name}-surface.webp`;
+      const response=await fetch(url,{signal:assetRequests.signal});
+      if(!response.ok)throw new Error(`Texture request returned ${response.status}`);
+      const image=await createImageBitmap(await response.blob());
+      try{
+        if(destroyed)return;
+        const texture=gl.createTexture();
+        if(!texture)return;
+        assetTextures.add(texture);
+        gl.bindTexture(gl.TEXTURE_2D,texture);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        surface.texture=texture;
+      }finally{image.close();}
+    }catch(error){
+      if(!destroyed)console.warn(`Could not load ${surface.name} surface`,error);
+    }
+  }));
   const policeVehicle={...vehicles[0]};
   function loadVehicleModel(vehicle,model){
     if(!model.asset)return;
@@ -1277,7 +1444,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
           gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
           return texture;
         };
-        const uploadPart=(index,vertices,elements)=>{
+        const uploadPart=(index,vertices,elements,surface=false)=>{
           const {name,image,tint,gloss,cutout,repeat}=asset.materials[index];
           const buffer=gl.createBuffer();
           assetBuffers.push(buffer);
@@ -1290,8 +1457,12 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elementBuffer);
             gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,elements,gl.STATIC_DRAW);
           }
+          const powerOfTwo=size=>size>0&&(size&(size-1))===0;
+          const nativeRepeat=(model.asset.useTextureSamplers&&repeat||model.asset.repeatMaterials?.includes(name))&&image&&
+            powerOfTwo(image.width)&&powerOfTwo(image.height);
           return {buffer,elementBuffer,count:elements?.length??vertices.length/9,
-            texture:textureFor(image),tint,gloss,cutout,repeat,
+            texture:textureFor(image,nativeRepeat),tint,gloss,cutout,repeat:repeat&&!nativeRepeat,
+            depthBias:model.asset.asphaltMaterial&&!surface?(image?index%7:12+index%7):0,
             windowGlass:model.asset.texturedWindows&&image?4
               :model.asset.windowMaterials?.includes(name)?(model.asset.windowAtlas??1):0};
         };
@@ -1337,9 +1508,37 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
           }
           return;
         }
-        if(model.asset.normalize){
-          const parts=[...uploadGroups(asset.body),...asset.indexedParts.map(part=>uploadPart(part.material,part.vertices,part.elements))];
+        if(model.asset.normalize||model.asset.city||model.asset.staticModel){
+          const indexedParts=model.asset.mountain?fitFrostpineMountain(asset.indexedParts,asset.span):asset.indexedParts;
+          const parts=[...uploadGroups(asset.body),...indexedParts.map(part=>uploadPart(part.material,part.vertices,part.elements,part.surface))];
           if(!parts.length||gl.isContextLost()||gl.getError()!==gl.NO_ERROR)throw new Error('Scenery upload failed');
+          if(model.asset.asphaltMaterial){
+            const road=asset.materials.findIndex(material=>material.name===model.asset.asphaltMaterial);
+            const image=asset.materials[road]?.image;
+            if(image){
+              const tile=document.createElement('canvas');
+              tile.width=tile.height=256;
+              const context=tile.getContext('2d');
+              if(context){
+                context.drawImage(image,0,0,256,256);
+                vehicle.asphalt=textureFor(tile,true);
+              }
+            }
+          }
+          if(model.asset.city){
+            const road=asset.materials.findIndex(material=>material.name==='Material.001');
+            if(road<0||!asset.materials[road].image)throw new Error('Harbor City road texture missing.');
+            vehicle.road={parts:[uploadPart(road,harborRoadVertices())]};
+            // Reuse the city mesh buffers while leaving the original pier on the west shore.
+            vehicle.district={parts:parts.filter((_,index)=>{
+              const vertices=asset.indexedParts[index]?.vertices;
+              if(!vertices)return true;
+              for(let i=0;i<vertices.length;i+=9){
+                if(vertices[i]*CITY.scale>=-500)return true;
+              }
+              return false;
+            })};
+          }
           vehicle.asset={parts,footprint:asset.footprint,span:asset.span,collisionFaces:asset.collisionFaces};
           return;
         }
@@ -1353,7 +1552,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         const headlights=front.vertices.length?upload(front):null;
         const redStrobe=asset.redStrobe.length?upload({vertices:asset.redStrobe}):null;
         const blueStrobe=asset.blueStrobe.length?upload({vertices:asset.blueStrobe}):null;
-        vehicle.asset={body:uploadGroups(asset.body),
+        vehicle.asset={body:[...uploadGroups(asset.body),...asset.indexedParts.map(part=>uploadPart(part.material,part.vertices,part.elements,part.surface))],
           wheels:asset.wheels.map(({groups,...wheel})=>({...wheel,parts:uploadGroups(groups)})),
           rearLenses:upload(lamps.lenses),rearGlow:upload(lamps.glow),headlights,redStrobe,blueStrobe};
         if(!vehicle.asset.body.length||gl.isContextLost()||gl.getError()!==gl.NO_ERROR)throw new Error('Vehicle upload failed');
@@ -1362,8 +1561,58 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
       }
     }).catch(error=>{throw new Error(`Could not load ${model.name}.`,{cause:error});});
   }
-  const modelJobs=CARS.flatMap((model,index)=>model.asset?[[vehicles[index],model]]:[]);
+  const frostpineMountain={};
+  const copperCity={};
+  const copperFallback=buildMesh(mesh=>{
+    for(const avenue of COPPER_AVENUES)for(let i=1;i<avenue.length;i++){
+      mesh.strip(...avenue[i-1],...avenue[i],COPPER_GATE_WIDTH,.13,'#5d6064');
+    }
+    for(const {x,y,w,d,h,angle} of COPPER_BUILDINGS){
+      mesh.box(x,y,w,d,0,h,'#bc9471',angle);
+    }
+  });
+  const cityModel={};
+  const beachKit={};
+  const {props:beachProps,palms:beachPalms}=basic?{props:[],palms:[]}:harborBeachLayout();
+  // Align the GLB's textured road surface with the game's driving plane.
+  const cityRoadLevel=-.423945;
+  const cityModelHeight=.035-cityRoadLevel*CITY.scale;
+  const cityIsland=new Mesh();
+  if(!basic){
+    for(const {x,y} of CITY_DISTRICTS){
+      cityIsland.plane(x-CITY_HALF_SIZE,y-CITY_HALF_SIZE,CITY_HALF_SIZE*2,CITY_HALF_SIZE*2,-.12,'#626b62');
+    }
+    cityIsland.plane(CITY.x-945,CITY.y-215,410,430,-.12,'#626b62');
+  }
+  const cityConnection=basic?null:buildMesh(mesh=>straitBridge(mesh,CITY_BRIDGE,false));
+  const cityGround=basic?null:upload(cityIsland);
+  const modelJobs=CARS.flatMap((model,index)=>model.asset&&!model.asset.onDemand?[[vehicles[index],model]]:[]);
+  const requestedCars=new Set();
+  let loadingCar=false;
+  function loadVisibleCar(index){
+    if(basic||loadingCar||!CARS[index]?.asset?.onDemand||requestedCars.has(index))return;
+    loadingCar=true;
+    requestedCars.add(index);
+    loadVehicleModel(vehicles[index],CARS[index]).catch(error=>{
+      vehicles[index].asset=null;
+      if(!destroyed)console.warn(error);
+    }).finally(()=>{loadingCar=false;});
+  }
+  if(!basic)modelJobs.push([cityModel,{name:'Harbor City',asset:{
+    url:`${import.meta.env.BASE_URL}3js%20/city/city_scene.glb`,scale:1,city:true,keepIndices:true,repeatMaterials:['Material.001']
+  }},true]);
   modelJobs.push([policeVehicle,{name:'Police car',asset:POLICE_ASSET}]);
+  if(!basic)modelJobs.push([frostpineMountain,{name:'Frostpine mountain',asset:{
+    url:`${import.meta.env.BASE_URL}3js%20/scenery/snowy_mountain.glb`,scale:1,
+    normalize:true,keepIndices:true,mountain:true
+  }},true]);
+  if(!basic)modelJobs.push([copperCity,{name:'Copper Island districts',asset:{
+    url:`${import.meta.env.BASE_URL}3js%20/city/beautiful_city.glb`,scale:1,origin:COPPER_CITY_ORIGIN,
+    staticModel:true,keepIndices:true,useTextureSamplers:true,asphaltMaterial:'Material.007'
+  }},true]);
+  if(!basic)modelJobs.push([beachKit,{name:'Beach Kit',asset:{
+    url:`${import.meta.env.BASE_URL}3js%20/scenery/beach_kit.glb`,scale:1,splitNodes:BEACH_KIT_NODES
+  }},true]);
   for(const [kind,file] of Object.entries(sceneryFiles)){
     const slot=sceneryModels[kind]={};
     modelJobs.push([slot,{name:kind,asset:sceneryAssetConfig(kind,file)}]);
@@ -1388,13 +1637,15 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
   const total=modelJobs.length+2;
   let loaded=1;
   if(!basic)onProgress(loaded,total);
-  const ready=basic?Promise.resolve():Promise.all(modelJobs.map(([vehicle,model,allowFallback])=>
+  const ready=basic?terrainTextures:Promise.all(modelJobs.map(([vehicle,model,allowFallback])=>
     loadVehicleModel(vehicle,model).catch(error=>{
       if(!allowFallback)throw error;
       if(!destroyed)console.warn(error);
     }).then(()=>{
     if(!destroyed)onProgress(++loaded,total);
-  }))).then(()=>{
+  }))).then(async()=>{
+    if(destroyed)return;
+    await terrainTextures;
     if(destroyed)return;
     broadleafCard=bakeSceneryCard(sceneryModels.broadleaf.asset);
     prepareBuildings();
@@ -1430,6 +1681,10 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
     gl.uniform2f(uniforms.spin,Math.cos(roll),Math.sin(roll));
     gl.uniform2f(uniforms.turn,Math.cos(angle),Math.sin(angle));
     for(const part of parts){
+      if(part.depthBias){
+        gl.enable(gl.POLYGON_OFFSET_FILL);
+        gl.polygonOffset(0,part.depthBias);
+      }
       gl.bindTexture(gl.TEXTURE_2D,part.texture);
       gl.uniform3fv(uniforms.assetTint,part.tint);
       gl.uniform1f(uniforms.assetGloss,part.gloss);
@@ -1443,6 +1698,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,part.elementBuffer);
         gl.drawElements(gl.TRIANGLES,part.count,gl.UNSIGNED_SHORT,0);
       }else gl.drawArrays(gl.TRIANGLES,0,part.count);
+      if(part.depthBias)gl.disable(gl.POLYGON_OFFSET_FILL);
     }
   }
 
@@ -1495,7 +1751,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
     return {card:true,parts:[{buffer,count:6,texture,tint:[1,1,1],gloss:0,cutout:true,repeat:false}]};
   }
 
-  function drawImportedCar(asset,x,z,angle,height,pitch,wheelSpin,steer){
+  function drawImportedCar(asset,x,z,angle,height,pitch,wheelSpin,steer,lift=0){
     gl.uniform1f(uniforms.material,material.importedCar);
     gl.uniform1i(uniforms.assetTexture,0);
     gl.enableVertexAttribArray(normalAttribute);
@@ -1503,7 +1759,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
     const c=Math.cos(angle),s=Math.sin(angle);
     for(const {pivot:[axle,radius,offset],front,parts} of asset.wheels){
       const wx=x+axle*c-offset*s,wz=z+axle*s+offset*c;
-      drawAssetParts(parts,wx,wz,angle+(front?steer:0),groundHeight(wx,wz)+radius,wheelSpin);
+      drawAssetParts(parts,wx,wz,angle+(front?steer:0),(lift?height+Math.sin(pitch)*axle:groundHeight(wx,wz))+radius,wheelSpin);
     }
     gl.disableVertexAttribArray(normalAttribute);
     gl.uniform1f(uniforms.material,material.world);
@@ -1735,6 +1991,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
 
   function drawVehicle(mesh,x,z,angle,height,pitch=0){
     gl.uniform1f(uniforms.material,material.vehicle);
+    gl.uniform1f(uniforms.assetGloss,mesh.gloss??1);
     draw(mesh,x,z,angle,height,pitch);
     gl.uniform1f(uniforms.material,material.world);
   }
@@ -1889,9 +2146,11 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
 
   return {
     ready,buildingFootprints,
+    get cityAvailable(){return Boolean(cityModel.asset);},
     render(cam,car,targets,wide,orbit,dt=0,road=true,accelerating=false,seconds=0,patrols=[],time=0,civilians=[],brokenScenery=new Map()){
       if(canvas.width===0||canvas.height===0)return;
       const preview=orbit!==null;
+      if(!car.police)loadVisibleCar(car.model??0);
       const viewAngle=preview?orbit:cam.angle;
       const fx=Math.cos(viewAngle),fz=Math.sin(viewAngle);
       const pitch=preview?.34:wide?.55:.174;
@@ -1899,7 +2158,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
       const aspect=canvas.width/canvas.height;
       const distance=preview?50:(wide?115:57)+Math.abs(car.speed)*.095;
       const elevation=groundHeight(car.x,car.y);
-      const height=elevation+(preview?23:wide?78:19.5);
+      const height=elevation+(car.lift??0)*.72+(preview?23:wide?78:19.5);
       const light=daylight(seconds);
       const carX=Math.cos(car.angle),carZ=Math.sin(car.angle);
       const headlamps=preview?0:light.lamps;
@@ -1907,6 +2166,7 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
       gl.uniform3fv(uniforms.skyTop,light.zenith);
       gl.uniform1f(uniforms.dusk,light.dusk);
       gl.uniform1f(uniforms.night,light.night);
+      gl.uniform1f(uniforms.waterTime,(time%3600000)/1000);
       gl.uniform1f(uniforms.lamps,headlamps);
       updateTrafficHeadlights(cam,civilians,patrols,headlamps>0);
       gl.uniform3f(uniforms.headlightOrigin,car.x+carX*17,elevation,car.y+carZ*17);
@@ -1924,6 +2184,12 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
       gl.uniform1f(uniforms.material,material.sky);
       draw(atmosphere,cam.x-fx*distance,cam.y-fz*distance,0,height);
       gl.enable(gl.DEPTH_TEST);
+      gl.uniform1i(uniforms.assetTexture,0);
+      for(const surface of terrainSurfaces){
+        gl.uniform1f(uniforms.material,surface.texture?surface.mode:material.terrain);
+        if(surface.texture)gl.bindTexture(gl.TEXTURE_2D,surface.texture);
+        draw(surface.mesh);
+      }
       gl.uniform1f(uniforms.material,material.terrain);
       draw(landscape);
       if(juniperGrass.texture){
@@ -1939,6 +2205,13 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         gl.uniform1f(uniforms.material,material.asphalt);
       }
       draw(asphalt);
+      if(copperCity.asphalt){
+        gl.uniform1i(uniforms.assetTexture,0);
+        gl.bindTexture(gl.TEXTURE_2D,copperCity.asphalt);
+        gl.uniform1f(uniforms.material,material.asphalt);
+      }
+      draw(copperAsphalt);
+
       gl.uniform1f(uniforms.material,material.pavement);
       draw(pavement);
       gl.uniform1f(uniforms.material,material.world);
@@ -1951,6 +2224,40 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
           drawSceneryModel(asset,0,0,0,0,1);
         }
       }else draw(bridgeFallback);
+      if(cityModel.asset&&CITY_DISTRICTS.some(({x,y})=>Math.hypot(x-cam.x,y-cam.y)<2900)){
+        draw(cityGround);
+        for(const district of CITY_DISTRICTS){
+          const dx=district.x-(cam.x-fx*distance),dz=district.y-(cam.y-fz*distance);
+          const depth=dx*fx+dz*fz;
+          const radius=district===CITY?1100:800;
+          if(depth< -radius||Math.hypot(dx,dz)>2400||
+            Math.abs(dz*fx-dx*fz)>Math.max(0,depth)*aspect*.8+radius)continue;
+          const asset=district===CITY?cityModel.asset:cityModel.district;
+          drawSceneryModel(asset,district.x,district.y,0,cityModelHeight,CITY.scale);
+        }
+        if(Math.hypot(CITY.x-cam.x,CITY.y-cam.y)<2900)draw(cityConnection);
+        drawSceneryModel(cityModel.road,0,0,0,0,1);
+        if(beachKit.asset)for(const {name,x,y,angle} of beachProps){
+          if(Math.hypot(x-cam.x,y-cam.y)>680)continue;
+          const asset=beachKit.asset.variants.get(name);
+          const height=Math.min(BEACH_KIT_SIZES[name],14/Math.max(...asset.span));
+          drawSceneryModel(asset,x,y,angle,-.18,height);
+        }
+        const beachPalm=sceneryModels.palm?.asset;
+        if(beachPalm)for(const {x,y,angle,height} of beachPalms){
+          if(Math.hypot(x-cam.x,y-cam.y)<1050)drawSceneryModel(beachPalm,x,y,angle,-.18,height);
+        }
+      }
+      if(copperCity.asset){
+        for(const district of COPPER_DISTRICTS){
+          const dx=district.x-cam.x,dz=district.y-cam.y;
+          if(Math.hypot(dx,dz)>3900||dx*fx+dz*fz< -1700)continue;
+          drawSceneryModel(copperCity.asset,district.x,district.y,district.angle+COPPER_CITY_ROTATION,.025,COPPER_CITY_SCALE);
+        }
+      }else if(Math.hypot(cam.x-DESERT_CENTER,cam.y-2520)<5300)draw(copperFallback);
+      if(frostpineMountain.asset&&Math.hypot(cam.x-6950,cam.y-7485)<4300){
+        drawSceneryModel(frostpineMountain.asset,0,0,0,3,1);
+      }
       drawImportedBuildings(cam.x-fx*distance,cam.y-fz*distance,fx,fz,aspect);
       const lamps=basic
         ?breakableScenery.filter(item=>item.streetlight&&!brokenScenery.has(item))
@@ -1987,72 +2294,82 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
         for(const target of targets)draw(gate,target.x,target.y,target.angle);
         gl.uniform1f(uniforms.emissive,0);
       }
-      for(const [index,patrol] of [...patrols,...civilians.filter(other=>other.police)].entries()){
-        const {x,y,angle,wheelSpin,braking,steer=0}=patrol;
+      const policeCars=[...patrols,...civilians.filter(other=>other.police)];
+      if(car.police)policeCars.push(car);
+      for(const [index,patrol] of policeCars.entries()){
+        const {x,y,angle,wheelSpin,braking,steer=0,lift=0,airPitch=0,landingCompression=0}=patrol;
+        if(basic&&(isCityLand(x,y)||isCityBridge(x,y)))continue;
         if(Math.abs(x-cam.x)>900||Math.abs(y-cam.y)>900)continue;
         const elevation=groundHeight(x,y);
+        const ground=carGroundPose({...patrol,model:0});
+        const bodyHeight=(lift?ground.height:Math.max(ground.height,elevation-.25))+lift-landingCompression;
+        const bodyAngle=lift?airPitch:ground.slope;
         const {asset}=policeVehicle;
-        drawContactShadow(policeVehicle.shadow,x,y,angle,elevation);
-        if(asset)drawImportedCar(asset,x,y,angle,elevation,0,wheelSpin,steer);
+        drawContactShadow(policeVehicle.shadow,x,y,angle,ground.height,ground.slope);
+        if(asset)drawImportedCar(asset,x,y,angle,bodyHeight,bodyAngle,wheelSpin,steer,lift);
         else{
-          drawVehicle(patrolBody,x,y,angle,elevation);
-          draw(policeBar,x,y,angle,elevation);
+          drawVehicle(patrolBody,x,y,angle,bodyHeight,bodyAngle);
+          draw(policeBar,x,y,angle,bodyHeight,bodyAngle);
         }
-        drawHeadlamps(asset?.headlights??policeVehicle.headlights,x,y,angle,elevation,headlamps);
-        drawRearLamps(asset??policeVehicle,x,y,angle,elevation,headlamps,braking);
+        drawHeadlamps(asset?.headlights??policeVehicle.headlights,x,y,angle,bodyHeight,headlamps,bodyAngle);
+        drawRearLamps(asset??policeVehicle,x,y,angle,bodyHeight,headlamps,braking,bodyAngle);
         const flash=patrol.traffic?null:(Math.floor(time/140)+index)%2;
         if(!asset||flash!==null){
           gl.uniform1f(uniforms.emissive,flash===null?0:flash?.98:.35);
-          if(!asset||asset.redStrobe)draw(asset?.redStrobe??redStrobe,x,y,angle,elevation);
+          if(!asset||asset.redStrobe)draw(asset?.redStrobe??redStrobe,x,y,angle,bodyHeight,bodyAngle);
           gl.uniform1f(uniforms.emissive,flash===null?0:flash?.35:.98);
-          if(!asset||asset.blueStrobe)draw(asset?.blueStrobe??blueStrobe,x,y,angle,elevation);
+          if(!asset||asset.blueStrobe)draw(asset?.blueStrobe??blueStrobe,x,y,angle,bodyHeight,bodyAngle);
           gl.uniform1f(uniforms.emissive,0);
         }
         if(asset)continue;
         const c=Math.cos(angle),s=Math.sin(angle);
         for(const axle of axles)for(const offset of [-track,track]){
           const wx=x+axle*c-offset*s,wz=y+axle*s+offset*c;
-          draw(vehicles[0].wheel,wx,wz,angle,groundHeight(wx,wz)+WHEEL_RADIUS+.14,wheelSpin);
+          draw(vehicles[0].wheel,wx,wz,angle,(lift?bodyHeight+Math.sin(bodyAngle)*axle:groundHeight(wx,wz))+WHEEL_RADIUS+.14,wheelSpin);
         }
       }
       for(const other of civilians){
-        if(other.police||Math.abs(other.x-cam.x)>800||Math.abs(other.y-cam.y)>800)continue;
-        const {x,y,angle,model,wheelSpin,braking}=other;
+        if(other.police||(basic&&(isCityLand(other.x,other.y)||isCityBridge(other.x,other.y)))||Math.abs(other.x-cam.x)>800||Math.abs(other.y-cam.y)>800)continue;
+        const {x,y,angle,model,wheelSpin,braking,lift=0,airPitch=0}=other;
+        loadVisibleCar(model);
         const vehicle=vehicles[model];
+        const {asset}=vehicle;
         const {length,width,body,wheel,headlights,shadow}=vehicle;
-        const base=groundHeight(x,y);
+        const ground=carGroundPose(other);
+        const bodyHeight=(lift?ground.height:Math.max(ground.height,groundHeight(x,y)-.25))+lift;
+        const bodyAngle=lift?airPitch:ground.slope;
         const cos=Math.cos(angle),sin=Math.sin(angle);
-        drawContactShadow(shadow,x,y,angle,base);
-        if(vehicle.asset)drawImportedCar(vehicle.asset,x,y,angle,base,0,wheelSpin,0);
-        else drawVehicle(body,x,y,angle,base);
-        drawHeadlamps(vehicle.asset?.headlights??headlights,x,y,angle,base,headlamps);
-        drawRearLamps(vehicle.asset??vehicle,x,y,angle,base,headlamps,braking);
-        if(vehicle.asset)continue;
+        drawContactShadow(shadow,x,y,angle,ground.height,ground.slope);
+        if(asset)drawImportedCar(asset,x,y,angle,bodyHeight,bodyAngle,wheelSpin,0,lift);
+        else drawVehicle(body,x,y,angle,bodyHeight,bodyAngle);
+        drawHeadlamps(asset?.headlights??headlights,x,y,angle,bodyHeight,headlamps,bodyAngle);
+        drawRearLamps(asset??vehicle,x,y,angle,bodyHeight,headlamps,braking,bodyAngle);
+        if(asset)continue;
         for(const axle of axles)for(const offset of [-track,track]){
           const wx=x+axle*length*cos-offset*width*sin,wz=y+axle*length*sin+offset*width*cos;
-          draw(wheel,wx,wz,angle,groundHeight(wx,wz)+WHEEL_RADIUS+.14,wheelSpin);
+          draw(wheel,wx,wz,angle,(lift?bodyHeight+Math.sin(bodyAngle)*axle*length:groundHeight(wx,wz))+WHEEL_RADIUS+.14,wheelSpin);
         }
       }
-      const {x,y:z,angle,wheelSpin,steer,braking,pitch:bodyPitch}=car;
+      if(car.police)return;
+      const {x,y:z,angle,wheelSpin,steer,braking,pitch:bodyPitch,lift=0,airPitch=0,landingCompression=0}=car;
       const cos=Math.cos(angle),sin=Math.sin(angle);
       const vehicle=vehicles[car.model??0];
       const {length,width,body,wheel,headlights,shadow}=vehicle;
-      const rear=groundHeight(x+axles[0]*length*cos,z+axles[0]*length*sin);
-      const front=groundHeight(x+axles[1]*length*cos,z+axles[1]*length*sin);
-      const slope=Math.atan2(front-rear,(axles[1]-axles[0])*length);
-      const bodyHeight=(front+rear)/2;
-      drawContactShadow(shadow,x,z,angle,bodyHeight,slope);
-      if(vehicle.asset)drawImportedCar(vehicle.asset,x,z,angle,bodyHeight,bodyPitch+slope,wheelSpin,steer);
-      else drawVehicle(body,x,z,angle,bodyHeight,bodyPitch+slope);
-      drawHeadlamps(vehicle.asset?.headlights??headlights,x,z,angle,bodyHeight,headlamps,bodyPitch+slope);
-      drawRearLamps(vehicle.asset??vehicle,x,z,angle,bodyHeight,headlamps,braking,bodyPitch+slope);
+      const ground=carGroundPose(car);
+      const bodyHeight=ground.height+lift-landingCompression;
+      const bodyAngle=lift?airPitch:bodyPitch+ground.slope;
+      drawContactShadow(shadow,x,z,angle,ground.height,ground.slope);
+      if(vehicle.asset)drawImportedCar(vehicle.asset,x,z,angle,bodyHeight,bodyAngle,wheelSpin,steer,lift);
+      else drawVehicle(body,x,z,angle,bodyHeight,bodyAngle);
+      drawHeadlamps(vehicle.asset?.headlights??headlights,x,z,angle,bodyHeight,headlamps,bodyAngle);
+      drawRearLamps(vehicle.asset??vehicle,x,z,angle,bodyHeight,headlamps,braking,bodyAngle);
       if(!vehicle.asset)for(const offsetX of axles){
         for(const offsetZ of [-track,track]){
           const wx=x+offsetX*length*cos-offsetZ*width*sin,wz=z+offsetX*length*sin+offsetZ*width*cos;
-          draw(wheel,wx,wz,angle+(offsetX>0?steer:0),groundHeight(wx,wz)+WHEEL_RADIUS+.14,wheelSpin);
+          draw(wheel,wx,wz,angle+(offsetX>0?steer:0),(lift?bodyHeight+Math.sin(bodyAngle)*offsetX*length:groundHeight(wx,wz))+WHEEL_RADIUS+.14,wheelSpin);
         }
       }
-      if(!preview){
+      if(!preview&&!lift){
         const model=CARS[car.model??0];
         drawSmoke(car,length,width,bodyHeight,dt,road,model.exhausts??singleExhaust,accelerating&&model.flameExhaust,model.blackExhaust);
       }
@@ -2076,11 +2393,15 @@ export function makeScene(canvas,onProgress=()=>{},{basic=false}={}){
       gl.deleteBuffer(lampGlow.buffer);
       for(const [,batch] of decorationFallbacks)gl.deleteBuffer(batch.buffer);
       gl.deleteBuffer(smokeBuffer);
-      for(const mesh of [atmosphere,landscape,juniperGround,pavement,asphalt,bridgeFallback,world,streetShadows,windows,gate,patrolBody,policeBar,redStrobe,blueStrobe])gl.deleteBuffer(mesh.buffer);
+      for(const {mesh} of terrainSurfaces)gl.deleteBuffer(mesh.buffer);
+      for(const mesh of [atmosphere,landscape,juniperGround,pavement,asphalt,copperAsphalt,bridgeFallback,world,streetShadows,windows,gate,patrolBody,policeBar,redStrobe,blueStrobe])gl.deleteBuffer(mesh.buffer);
       for(const {body,wheel,rearLenses,rearGlow,headlights,shadow} of vehicles){
         for(const mesh of [body,wheel,rearLenses,rearGlow,headlights,shadow])gl.deleteBuffer(mesh.buffer);
       }
       if(basicScenery)gl.deleteBuffer(basicScenery.buffer);
+      gl.deleteBuffer(copperFallback.buffer);
+      if(cityGround)gl.deleteBuffer(cityGround.buffer);
+      if(cityConnection)gl.deleteBuffer(cityConnection.buffer);
       for(const {base,debris} of debrisMeshes.values()){
         gl.deleteBuffer(base.buffer);
         if(debris)gl.deleteBuffer(debris.buffer);

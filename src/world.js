@@ -1,15 +1,20 @@
+import {FROSTPINE_MOUNTAIN,mountainSample} from './frostpine-mountain.js';
+import {COPPER_ROUTES,COPPER_SHORE,copperCornerTrim,copperShoreRange,COPPER_DUNES,copperDuneHeight,COPPER_GRID,COPPER_JUNCTION,COPPER_SOUTH_ROAD,COPPER_BUILDINGS,COPPER_STREET_HEIGHT,COPPER_CONNECTOR_PATHS,COPPER_AVENUES,COPPER_START,isCopperStreet,isCopperConnector,hitsCopperBuilding} from './copper-island.js';
+import {CITY,CITY_BRIDGE,CITY_APPROACHES,CITY_DISTRICTS,CITY_HALF_SIZE,CITY_STREETS,cityShoreline,isCityBridge,isCityLand,hitsCityBuilding} from './city-island.js';
 import {roundRoad} from './road-curves.js';
 import {CARS} from './cars.js';
 export const SIZE = 5200;
 export const CAR_TOP_SPEED=244;
 export const KMH_PER_SPEED_UNIT=.76;
-export const WORLD_WIDTH=10600;
-export const WORLD_HEIGHT=8640;
-export const ISLAND_NAMES={coast:'Juniper Island',desert:'Copper Island',snow:'Frostpine Island'};
+const ORIGINAL_WORLD_HEIGHT=8640;
+export const WORLD_WIDTH=14800;
+export const WORLD_MIN_Y=Math.min(0,COPPER_SHORE.north);
+export const WORLD_HEIGHT=8800;
+export const ISLAND_NAMES={coast:'Juniper Island',desert:'Copper Island',snow:'Frostpine Island',city:'Harbor City'};
 const bridge={west:4780,east:6100,y:4300,width:132};
 export const bridges=[bridge,
   {west:5050,east:6060,y:3800,width:132,vertical:true},
-  {west:4980,east:6060,y:7300,width:132,vertical:true}
+  {west:COPPER_GRID.south,east:6060,y:7300,width:132,vertical:true}
 ];
 export function snowHalfWidth(y){
   return 2980*Math.max(0,1-((y-7060)/1450)**4)**.25;
@@ -18,68 +23,153 @@ export function isSnow(x,y){
   return Math.abs(x-5500)<snowHalfWidth(y);
 }
 export function islandName(x,y){
+  if(isCityLand(x,y))return ISLAND_NAMES.city;
   if(isSnow(x,y))return ISLAND_NAMES.snow;
   if(isDesert(x,y))return ISLAND_NAMES.desert;
-  return y<=SIZE&&x<shore(y)-10?ISLAND_NAMES.coast:'Bridge crossing';
+  return isJuniperLand(x,y)?ISLAND_NAMES.coast:'Bridge crossing';
 }
-export function desertHalfWidth(y){
-  return 2460*Math.max(0,1-((y-2600)/2460)**4)**.25;
-}
+export const DESERT_CENTER=(COPPER_SHORE.west+COPPER_SHORE.east)/2;
+
 export function isDesert(x,y){
-  return Math.abs(x-8000)<desertHalfWidth(y);
+  const shore=copperShoreRange(y);
+  return Boolean(shore&&x>=shore[0]&&x<=shore[1]);
 }
-function bridgeAt(x,y){
+let cityBridgeEnabled=false;
+
+export function setCityBridgeEnabled(enabled){
+  cityBridgeEnabled=enabled;
+}
+
+function bridgeAt(x,y,showCity=cityBridgeEnabled){
+  if(showCity&&isCityBridge(x,y))return CITY_BRIDGE;
   return bridges.find(b=>{
     const along=b.vertical?y:x,across=b.vertical?x:y;
     return along>=b.west&&along<=b.east&&Math.abs(across-b.y)<b.width/2;
   });
 }
 export function isLand(x,y){
-  return (y<=SIZE&&x<shore(y)-10)||isDesert(x,y)||isSnow(x,y);
+  return isCityLand(x,y)||isJuniperLand(x,y)||isDesert(x,y)||isSnow(x,y);
 }
 export const START = { x: 1770, y: 2060, angle: -Math.PI / 2 };
 export const ISLAND_STARTS={
   coast:START,
-  desert:{x:6800,y:3850,angle:-Math.PI/2},
-  snow:{x:5050,y:7220,angle:-Math.PI/2}
+  desert:COPPER_START,
+  snow:{x:4860,y:7240,angle:-Math.PI/2},
+  city:{x:CITY.x-300,y:CITY.y,angle:0}
 };
 
-export const routeWaypoints = [
-  [[1770,3490],[1770,3100],[1770,2390],[1770,1550],[1770,1120],[1620,830],[1410,540],[1410,130]],
-  [[650,1550],[1770,1550],[1940,1510],[2230,1260],[2470,1290],[2650,1480],[2710,1720],[2680,1920],[2710,2110],[2670,2300],[2540,2390],[1770,2390],[1020,2390],[810,2540],[690,2900]],
-  [[1770,1120],[1660,1100],[1200,1100],[950,980],[780,810],[410,810]],
-  [[1770,2000],[1390,2000],[1220,1920],[1120,1550]],
-  [[1770,2820],[2190,2820],[2410,2710],[2540,2390]],
-  [[1770,3490],[1370,3490],[1040,3730],[750,3800],[500,3610],[410,3250],[690,2900]],
-  [[750,3800],[740,4130],[960,4330],[1370,4290],[1750,4090],[2210,4090],[2640,4310],[3050,4400],[3500,4270],[3880,4010],[4250,3970],[4530,4090],[4670,4080]],
-  [[1770,3490],[2180,3490],[2640,3680],[3150,3670],[3500,3780],[3880,4010]],
-  [[2670,2300],[2780,2590],[2920,2920],[2910,3250],[3150,3670]],
-  [[4530,4090],[4570,4220],[4640,4300],[4780,4300]],
-  [[6100,4300],[6560,4300],[6800,4140],[6800,3620],[6800,3050],[6690,2470],[6940,1860],[7370,1440],[8050,1320],[8720,1490],[9250,1940],[9520,2470],[9470,3070],[9100,3560],[8650,3880],[8090,4120],[7530,4240],[6800,4140]],
-  [[6800,3620],[7350,3620],[7990,3620],[8650,3880]],
-  [[7350,4240],[7350,3620],[7350,3050],[7570,2680],[8040,2450],[8760,2480],[9520,2470]],
-  [[6800,3050],[7350,3050],[7990,3050],[8550,3020],[9470,3070]],
-  [[7990,3620],[7990,3050],[8040,2450],[8050,1320],[7970,650]],
-  [[9250,1940],[9670,1600],[9900,1080]],
-  [[3500,4270],[3650,4540],[3800,4770],[3800,5050]],
-  [[7530,4240],[7350,4540],[7300,4750],[7300,4980]],
-  [[3800,6060],[3800,6410],[4060,6760],[4430,6970],[5050,7000],[5650,6880],[6220,6710],[6810,6670],[7300,6390],[7300,6060]],
-  [[4060,6760],[3420,7100],[3210,7540],[3760,7860],[4410,7930],[5050,7810],[5580,7930],[6280,7950],[7010,7770],[7610,7530],[7710,7020],[7300,6390]],
-  [[5050,7000],[5050,7420],[5050,7810]],
-  [[3760,7860],[4220,7520],[5050,7420],[5750,7420],[6410,7240],[6810,6670]],
-  [[7010,7770],[6830,8100],[6680,8240]],
-  [[2210,4090],[2210,4660],[2460,4830],[2590,4830],[3010,4830],[3050,4400]],
-  [[2590,4830],[2590,4750]],
-  [[7080,3620],[7080,3548]],
-  [[5350,6940],[5350,7010]],
+const westStreet=570,westAvenue=1080,mainAvenue=1770,eastStreet=2370;
+const juniperCrossStreets=[
+  [[westStreet,1030],[eastStreet,1030]],
+  [[westAvenue,1660],[eastStreet,1660]],
+  [[westStreet,2070],[890,2070],[1240,2250],[eastStreet,2250]],
+  [[westStreet,3040],[eastStreet,3040]],
+  [[mainAvenue,3560],[eastStreet,3560]]
 ];
-export const routes=routeWaypoints.map(route=>roundRoad(route));
+export const JUNIPER_ROWS=juniperCrossStreets.map(street=>street.at(-1)[1]);
+const northStreet=560,southStreet=4160;
+const juniperPerimeter=[
+  [westStreet,860],[westStreet,northStreet],[eastStreet,northStreet],
+  [eastStreet,southStreet],[westStreet,southStreet],[westStreet,3950],
+  [440,3710],[445,3370],[westStreet,3180],[westStreet,2270],
+  [westStreet,2070],[westStreet,1910],[435,1710],[450,1440],
+  [westStreet,1240],[westStreet,860]
+];
+const juniperCoastRoad=[
+  [eastStreet,3560],[2860,3560],[3330,3710],[3790,3980],
+  [4250,3970],[4530,4090],[4670,4080]
+];
+const juniperBridgeRoad=[[4530,4090],[4570,4220],[4640,4300],[4780,4300]];
+const juniperSouthRoad=[[eastStreet,3950],[2600,4135],[2960,southStreet],[3500,4270],[3650,4540],[3800,4770],[3800,5050]];
+const juniperScenicLoop=[
+  ...juniperCoastRoad.slice(0,4),[3500,4270],[2960,southStreet],
+  ...juniperSouthRoad.slice(0,2).reverse(),[eastStreet,3560]
+];
+export const JUNIPER_TRAFFIC_ROUTES=[juniperPerimeter,juniperScenicLoop,
+  [[westAvenue,1030],[eastStreet,1030],[eastStreet,3040],[westAvenue,3040]]
+];
+const juniperWestAvenue=[
+  [westAvenue,northStreet],[westAvenue,3040],[1080,3350],[1310,3580],[1310,southStreet]
+];
+const juniperRoads=[
+  juniperWestAvenue,[[mainAvenue,northStreet],[mainAvenue,southStreet]],
+  ...juniperCrossStreets,
+  juniperCoastRoad,juniperBridgeRoad,juniperSouthRoad,
+  [[3790,3980],[3500,4270]],
+  [[2210,southStreet],[2210,4660],[2460,4830],[3010,4830],[3140,4620],[3140,4193.6]],
+  [[2590,4830],[2590,4750]]
+];
+const frostpineStadium={x:5285,y:7160,name:'Frostpine Stadium'};
+const stadiumDepth=287;
+const frostpineBridgeRoad=[
+  [3800,6060],[3800,6440],[4060,6690],[4630,6760],[5370,6760],
+  [5870,6610],[6480,6420],[7110,6300],[7300,6060]
+];
+const frostpineTownLoop=[
+  [4060,6690],[3650,6850],[3440,7270],[3490,7620],[3820,7860],
+  [4500,7910],[5010,7890],[5500,7760],[5670,7520],[5620,7210],
+  [5540,6960],[5370,6760]
+];
+const frostpineCrossStreets=[
+  [[3650,6850],[3920,6960],[5540,6960]],
+  [[3440,7270],[4220,7270],[4420,7360],[5650,7360]],
+  [[3490,7620],[3890,7620],[4070,7570],[5650,7570]]
+];
+const frostpineAvenues=[
+  [[4060,6690],[4060,7060],[4060,7270],[4070,7570],[4070,7878.4]],
+  [[4860,6760],[4860,7570],[4790,7898.6]],
+  [[frostpineStadium.x,6960],[frostpineStadium.x,frostpineStadium.y-stadiumDepth/2]]
+];
+const frostpineRoads=[
+  frostpineBridgeRoad,[...frostpineTownLoop,[4630,6760],[4060,6690]],
+  ...frostpineCrossStreets,...frostpineAvenues
+];
+export const FROSTPINE_TRAFFIC_ROUTES=[
+  [...frostpineTownLoop,[4630,6760]],
+  [[4060,6960],[4860,6960],[4860,7570],[4070,7570],[4060,7270]]
+];
+export const INTERISLAND_TRAFFIC_ROUTE=[
+  ...juniperSouthRoad.slice(3),...frostpineBridgeRoad,
+  [7300,COPPER_GRID.south],[COPPER_GRID.west,COPPER_GRID.south],[COPPER_GRID.west,4300],
+  [6100,4300],...juniperBridgeRoad.slice().reverse(),...juniperCoastRoad.slice(3,-1).reverse(),[3500,4270]
+];
+export const routes=[
+  roundRoad(juniperPerimeter,true,()=>170),
+  ...juniperRoads.map(route=>roundRoad(route)),
+  ...COPPER_ROUTES.map(route=>roundRoad(route,false,copperCornerTrim)),
+  COPPER_SOUTH_ROAD,
+  ...frostpineRoads.map(route=>roundRoad(route)),
+  ...COPPER_CONNECTOR_PATHS
+];
 export const roadWidth = 68;
 export const sidewalkWidth = roadWidth+11;
 let seed = 7141;
 const random = () => ((seed = (Math.imul(seed,1664525) + 1013904223) >>> 0) / 4294967296);
 const clamp = (value,min,max) => Math.max(min,Math.min(max,value));
 export const shore = y => 3080 + Math.sin(y/355)*106 + Math.sin(y/132)*27 - y*.047 + 2010*smooth((y-2250)/1550);
+const juniperWestBanks=[
+  [0,1600],[65,1050],[150,630],[285,350],[500,220],[850,125],
+  [1200,165],[1530,245],[1810,150],[2190,210],[2580,112],[2850,165],
+  [3170,265],[3520,220],[3800,135],[4100,193],[4390,350],[4620,650],
+  [4790,1090],[4920,1800],[5040,2480],[5130,3290],[5180,3660],[5200,3800]
+];
+export function juniperShoreRange(y){
+  if(y<0||y>SIZE)return null;
+  let i=1;
+  while(y>juniperWestBanks[i][0])i++;
+  const [a,left]=juniperWestBanks[i-1],[b,right]=juniperWestBanks[i];
+  const t=(y-a)/(b-a);
+  const west=left+(right-left)*(.65*t+.35*smooth(t));
+  const east=y<345?1600+(shore(y)-1600)*smooth(y/345)
+    :y>4440?3800+(shore(y)-3800)*(1-smooth((y-4440)/(SIZE-4440))):shore(y);
+  return [west,east];
+}
+
+function isJuniperLand(x,y,margin=10){
+  const banks=juniperShoreRange(y);
+  return Boolean(banks&&x>=banks[0]+margin&&x<=banks[1]-margin);
+}
+
 const squaredDistanceTo = (x,y,a,b) => {
   const dx=b[0]-a[0], dy=b[1]-a[1];
   const t=clamp(((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy),0,1);
@@ -87,16 +177,16 @@ const squaredDistanceTo = (x,y,a,b) => {
 };
 const segments=routes.flatMap(route=>route.slice(1).map((point,i)=>[route[i],point]));
 const nearRoad = (x,y,radius) => segments.some(([a,b])=>squaredDistanceTo(x,y,a,b)<radius*radius);
-export const overlapsSidewalk = (x,y,radius) => nearRoad(x,y,sidewalkWidth/2+radius);
+export const overlapsSidewalk = (x,y,radius) => nearRoad(x,y,sidewalkWidth/2+radius)||(isDesert(x,y)&&isCopperConnector(x,y,radius,true));
 const smooth = value => {
   const t=clamp(value,0,1);
   return t*t*(3-2*t);
 };
 export const stadiums=[
   {x:2590,y:4550,name:'Metasiberia Stadium'},
-  {x:7080,y:3350,name:'Copper Stadium'},
-  {x:5350,y:7210,name:'Frostpine Stadium'}
-].map(site=>({...site,w:400,d:287,h:43,kind:'stadium'}));
+  frostpineStadium,
+  {x:6900,y:2450,name:'Copper Stadium'}
+].map(site=>({...site,w:400,d:stadiumDepth,h:43,kind:'stadium'}));
 export const stadium=stadiums[0];
 export const lighthouse={x:4710,y:4080,name:'Cape Beacon',kind:'lighthouse',w:22,d:22};
 
@@ -117,7 +207,7 @@ export function stadiumDriveLayout(bounds=stadium){
 
 const basicStadiumLayouts=new Map(stadiums.map(site=>[site,stadiumDriveLayout(site)]));
 
-export function stadiumDistance(x,y){
+function stadiumDistance(x,y){
   return Math.min(...stadiums.map(site=>Math.max(Math.abs(x-site.x)-site.w/2,Math.abs(y-site.y)-site.d/2)));
 }
 
@@ -125,34 +215,111 @@ export function bridgeHeight(x,span){
   return 9*smooth((x-span.west)/175)*smooth((span.east-x)/175);
 }
 
-export function groundHeight(x,y){
-  const span=bridgeAt(x,y);
+export function copperTerrainHeight(x,y){
+  const height=copperDuneHeight(x,y);
+  if(height===0)return 0;
+  const coast=copperShoreRange(y);
+  if(!coast)return 0;
+  const edge=Math.min(x-coast[0],coast[1]-x,y-COPPER_SHORE.north,COPPER_SHORE.south-y);
+  if(edge<=0)return 0;
+  let roadDistance=Infinity;
+  for(const [a,b] of segments)roadDistance=Math.min(roadDistance,squaredDistanceTo(x,y,a,b));
+  const paved=isCopperStreet(x,y)||isCopperConnector(x,y,5,true)||vehicleHitsBuilding({x,y,angle:0,model:0});
+  return paved?0:height*smooth(edge/46)*smooth((Math.sqrt(roadDistance)-45)/63)*smooth((stadiumDistance(x,y)-3)/75);
+}
+
+function frostpineMountainHeight(x,y,roadDistance,shoreDistance){
+  const {west,east,north,south}=FROSTPINE_MOUNTAIN;
+  const edge=Math.min(x-west,east-x,y-north,south-y);
+  if(edge<=0)return 0;
+  const blend=smooth(edge/260)*smooth(shoreDistance/170)*smooth((roadDistance-85)/240);
+  return mountainSample(x,y)*670*blend;
+}
+
+export function groundHeight(x,y,showCity=cityBridgeEnabled){
+  const span=bridgeAt(x,y,showCity);
   if(span)return bridgeHeight(span.vertical?y:x,span);
   const snow=isSnow(x,y);
-  const desert=isDesert(x,y);
-  if(!snow&&!desert&&(y>SIZE||x>shore(y)-42))return 0;
+  if(isDesert(x,y))return isCopperStreet(x,y)?COPPER_STREET_HEIGHT:copperTerrainHeight(x,y);
+  if(!snow&&!isJuniperLand(x,y,42))return 0;
   let square=Infinity;
   for(const [a,b] of segments)square=Math.min(square,squaredDistanceTo(x,y,a,b));
   const distance=Math.sqrt(square);
   const stadiumGrade=smooth((stadiumDistance(x,y)-3)/75);
   if(snow){
+    const approachGrade=showCity?smooth((Math.sqrt(squaredDistanceTo(x,y,...CITY_APPROACHES[0]))-40)/82):1;
     const edge=snowHalfWidth(y)-Math.abs(x-5500);
     const hills=10+9*Math.sin(x*.015+y*.011)+6*Math.cos(y*.024-x*.008);
-    const summit=150*Math.exp(-(((x-6260)/345)**4+((y-7590)/240)**4));
-    return (Math.max(0,hills)+summit)*smooth((distance-68)/105)*smooth(edge/130)*stadiumGrade;
-  }
-  if(desert){
-    const coast=desertHalfWidth(y)-Math.abs(x-8000);
-    const dunes=9+8*Math.sin(x*.018+y*.011)+6*Math.cos(x*.027-y*.025);
-    const mesa=105*Math.exp(-(((x-8920)/250)**4+((y-1980)/230)**4));
-    const approach=1-smooth((190-Math.abs(y-bridge.y))/125)
-      *(1-smooth((x-bridge.east-40)/130));
-    return (Math.max(0,dunes)+mesa)*smooth((distance-64)/110)*smooth(coast/130)*approach*stadiumGrade;
+    const townGrade=x<5730?205:68;
+    return Math.max(0,hills)*smooth((distance-townGrade)/105)*smooth(edge/130)*stadiumGrade*approachGrade
+      +frostpineMountainHeight(x,y,distance,edge);
   }
   const height=12+6*Math.sin(x*.008+y*.004)+5*Math.cos(y*.015-x*.006)
     +3*Math.sin(x*.034+y*.024)+2*Math.cos(x*.057-y*.023);
-  return Math.max(0,height)*smooth((distance-63)/113)*smooth((shore(y)-42-x)/125)*stadiumGrade;
+  const townGrade=x>=300&&x<=2650&&y>=300&&y<=4400?205:63;
+  const [west,east]=juniperShoreRange(y);
+  const coastGrade=smooth((Math.min(x-west,east-x)-42)/125);
+  return Math.max(0,height)*smooth((distance-townGrade)/113)*coastGrade*stadiumGrade;
 }
+export const CAR_AXLES=[-10,9.7];
+
+export function carGroundPose({x,y,angle,model=0}){
+  const length=CARS[model].length??1;
+  const dx=Math.cos(angle)*length,dy=Math.sin(angle)*length;
+  const [rear,front]=CAR_AXLES.map(axle=>groundHeight(x+axle*dx,y+axle*dy));
+  return {height:(front+rear)/2,slope:Math.atan2(front-rear,(CAR_AXLES[1]-CAR_AXLES[0])*length)};
+}
+
+// Driving speed is stored in world units per second.
+const metersPerWorldUnit=KMH_PER_SPEED_UNIT/3.6;
+const jumpGravity=9.8/metersPerWorldUnit;
+const minimumJumpSpeed=16/metersPerWorldUnit;
+const maxLaunchSpeed=2.5/metersPerWorldUnit;
+
+export function updateCarJump(car,previous,dt){
+  if(dt<=0)return;
+  // A critically damped suspension returns to ride height without a second bounce.
+  const compression=car.landingCompression??0;
+  const springRate=17;
+  const springVelocity=(car.landingVelocity??0)+springRate*compression;
+  const damping=Math.exp(-springRate*dt);
+  car.landingCompression=(compression+springVelocity*dt)*damping;
+  car.landingVelocity=(springVelocity-springRate*(compression+springVelocity*dt))*damping;
+  const airborne=car.lift>0;
+  if(!airborne&&Math.abs(car.speed)<minimumJumpSpeed){
+    car.verticalSpeed=0;
+    return;
+  }
+  const ground=carGroundPose(car);
+  const before=carGroundPose(previous);
+  const groundDelta=ground.height-before.height;
+  const roadVelocity=groundDelta/dt;
+  const previousVelocity=car.verticalSpeed??roadVelocity;
+  const velocity=airborne?previousVelocity:Math.min(previousVelocity,maxLaunchSpeed);
+  const lift=(car.lift??0)+velocity*dt-jumpGravity*dt*dt/2-groundDelta;
+  // Suspension follows shallow dips. Once airborne, gravity alone drives the arc.
+  const clearedSuspension=velocity-roadVelocity>jumpGravity*dt/2+.55/metersPerWorldUnit;
+  if(lift>0&&(airborne||clearedSuspension)){
+    car.lift=lift;
+    car.verticalSpeed=velocity-jumpGravity*dt;
+    if(airborne){
+      const flightPitch=clamp(Math.atan2(car.verticalSpeed,Math.abs(car.speed))-.025,-.22,.15);
+      const angle=car.airPitch??before.slope;
+      car.airPitch=angle+(flightPitch-angle)*(1-Math.exp(-dt*3.2));
+    }else{
+      car.airPitch=clamp(before.slope+(car.pitch??0),-.26,.26);
+    }
+    return;
+  }
+  if(airborne){
+    const impact=Math.max(0,roadVelocity-(velocity-jumpGravity*dt));
+    car.landingVelocity=Math.min(32,impact*.62);
+  }
+  car.verticalSpeed=roadVelocity;
+  car.lift=0;
+  car.airPitch=0;
+}
+
 const landmarks = [
   {x:1570,y:1350,name:'JUNIPER',kind:'town'},
   {x:2400,y:1090,name:'THE BLUFFS'},
@@ -161,123 +328,66 @@ const landmarks = [
   {x:750,y:3800,name:'Pine Hollow',kind:'forest'},
   ...stadiums,
   lighthouse,
-  {x:7350,y:3620,name:'Copper City',kind:'desert'},
-  {x:8910,y:1940,name:'Red Mesa',kind:'desert'},
   {x:5450,y:4300,name:'Strait Bridge',kind:'desert'},
   {x:5170,y:7110,name:'Frostpine Village',kind:'snow'},
   {x:6260,y:7600,name:'Glacier Ridge',kind:'snow'},
 ];
 const buildingCandidates=[];
-for (const [cx,cy,nx,ny] of [[1540,1320,4,3],[1510,1810,4,3],[1170,2240,5,2],[1960,1810,2,3],[1520,2540,4,2],[640,3950,2,3],[3070,3570,3,2]]) {
-  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++){
-    const x=cx+(i-(nx-1)/2)*65+random()*10;
-    const y=cy+(j-(ny-1)/2)*62+random()*10;
-    if(!nearRoad(x,y,66)) buildingCandidates.push({x,y,w:32+random()*21,d:24+random()*17,h:14+random()*17,roof:['#dfaa79','#b97964','#e9d4a7','#99a6a2'][Math.floor(random()*4)]});
-  }
-}
-// Roadside blocks form a street-level district around the starting intersection.
-for(const [x, rows] of [[1697,[1660,1738,1816,1894,2050,2128,2206,2284]], [1842,[1648,1730,1812,1894,1976,2058,2140,2222,2304]]]){
-  for(const [i,y] of rows.entries()){
-    const style=['stucco','brick','glass','retail'][(i+(x>1770?2:0))%4];
-    const h={retail:14,stucco:44,brick:57,glass:81}[style]+(style==='retail'?0:i%3*9);
-    buildingCandidates.push({x,y,w:style==='retail'?46:39,d:36+i%3*6,h,
-      roof:['#dfaa79','#db937a','#e9d4a7','#a8bdba'][i%4],style});
-  }
-}
-// The tower complexes share one scale and sit on separate grounds clear of the road network.
-for(const [x,y,fullOnly] of [
-  [1025,400,false],[2200,850,false],
-  [675,2000,true],[1400,2950,true],[6425,3625,true],[7325,2250,true],
-  [2150,1950,true],[4925,6575,true],
-  [3475,3225,true],[7900,4625,true],[8425,2075,true],[5650,6375,true]
-]){
-  buildingCandidates.push({x,y,w:610.1,d:650.1,h:900,
-    roof:'#a8bdba',style:'glass',importedTower:true,fullOnly});
-}
-for(const [x,y] of [
-  [1630,2130],[1630,1870],[590,670],[1490,960],[1030,1390],[2400,1490],
-  [1380,2250],[2290,2530],[730,3200],[2190,3080],[1350,4010],[3000,4050],
-  [6930,3750],[4920,7200]
-]){
-  buildingCandidates.push({x,y,w:155,d:155,h:300,style:'glass',importedTower:true,fullOnly:true,model:'building03'});
-}
-for(const [x,y] of [
-  [455,1145],[1270,1270],[1545,1385],[1395,1715],[2665,1170],[3020,2615],
-  [1925,2545],[925,2815],[2155,3330],[1520,3655],[2765,4140],[865,3580]
-]){
-  buildingCandidates.push({x,y,w:200,d:205,h:220,style:'brick',importedTower:true,fullOnly:true,model:'cityBuilding'});
-}
-// The base set supplies one site and height for each distinct New York building.
+// Model variants and their target heights for roadside lots.
 const newYorkBuildings=[
-  ['b1_0',625,480,85],['b2_1',1100,825,92],['b3_2',510,1400,82],
-  ['b4_3',535,1580,105],['b5_4',1070,1870,132],['b6_5',1585,1660,125],
-  ['g1_8',1880,1275,290],['g2_9',2140,1530,300],['g3_10',1215,2070,340],
-  ['g4_11',1665,2510,300],['g5_12',1250,2525,285],['g6_13',1515,2520,310],
-  ['emp_state._final_14',1920,3060,360],['metlife_15',2520,2880,255],
-  ['tower_one_16',2690,3350,410],['christler_17',2895,3525,345],
-  ['woolworth_18',3180,4210,315],['new_york_times_19',1665,4295,330],
-  ['flatiron_20',1110,4200,155]
+  ['b1_0',85],['b2_1',92],['b3_2',82],
+  ['b4_3',105],['b5_4',132],['b6_5',125],
+  ['g1_8',290],['g2_9',300],['g3_10',340],
+  ['g4_11',300],['g5_12',285],['g6_13',310],
+  ['emp_state._final_14',360],['metlife_15',255],
+  ['tower_one_16',410],['christler_17',345],
+  ['woolworth_18',315],['new_york_times_19',330],
+  ['flatiron_20',155]
 ];
-const newYorkRepeats=[
-  [
-    [870,1435],[1070,1235],[695,1435],[1295,985],[1070,2010],[2120,2560],
-    [2320,2910],[2545,2735],[2620,2560],[2720,2810],[1945,3985],[1945,4210],
-    [2120,3985],[1770,3985],[2070,4385],[2545,3410],[2370,3410],[2720,3535],[2720,3210]
-  ],[
-    [2545,3235],[1070,2185],[745,2410],[1120,2510],[945,2635],[645,2585],
-    [1770,810],[1670,635],[1320,810],[1545,460],[1720,460],[545,4085],
-    [620,3910],[620,4260],[445,3910],[370,4085],[3020,2810],[2795,2985],[2870,2435]
-  ]
+// Keep the buildings along straight sections, leaving open space around curved junctions.
+const juniperFrontages=[
+  ...juniperCrossStreets.flatMap(street=>street.slice(1).flatMap((end,i)=>{
+    const start=street[i];
+    return start[1]===end[1]?[[start,end]]:[];
+  })),
+  [[westStreet,northStreet],[eastStreet,northStreet]],
+  [[westStreet,southStreet],[eastStreet,southStreet]],
+  [[westAvenue,northStreet],[westAvenue,3040]],
+  [[mainAvenue,northStreet],[mainAvenue,southStreet]],
+  [[eastStreet,1030],[eastStreet,3450]]
 ];
-for(const [index,[variant,x,y,h]] of newYorkBuildings.entries()){
-  for(const [siteX,siteY] of [[x,y],...newYorkRepeats.map(set=>set[index])]){
-    buildingCandidates.push({x:siteX,y:siteY,w:105,d:105,h,style:'brick',importedTower:true,
-      fullOnly:true,model:'newYork',variant});
-  }
-}
-// Each of the other islands gets the complete New York set plus both apartment styles.
-for(const sites of [
-  [
-    [7055,2925],[7680,3400],[8180,3450],[8980,3450],[9180,2600],[8830,2300],
-    [7830,1850],[6855,2425],[7905,4025],[6905,2925],[7830,3400],[8155,3300],
-    [9080,3300],[9330,2625],[8830,2150],[7880,2000],[6930,2275],[7755,4025],
-    [7205,2925],[7505,3400],[8355,3575],[8805,3550],[9005,2625],[8880,1925],
-    [7880,1650],[6530,2450],[7955,3825]
-  ],[
-    [4760,7260],[5460,7585],[6235,7035],[6860,7085],[7160,7560],[5960,7760],
-    [4685,7710],[4010,7260],[3610,7560],[4760,7110],[5310,7585],[6210,6885],
-    [6710,7085],[7010,7585],[5810,7785],[4535,7735],[3935,7110],[3460,7510],
-    [4610,7310],[5635,7585],[6035,6935],[6860,6910],[7335,7460],[6160,7785],
-    [4885,7660],[4210,7335],[3810,7535]
-  ]
-]){
-  for(const [i,[x,y]] of sites.entries()){
-    const common={x,y,style:'brick',importedTower:true,fullOnly:true};
-    if(i<newYorkBuildings.length){
-      const [variant,,,h]=newYorkBuildings[i];
-      buildingCandidates.push({...common,w:105,d:105,h,model:'newYork',variant});
-    }else if(i<newYorkBuildings.length+4){
-      buildingCandidates.push({...common,w:155,d:155,h:300,model:'building03'});
-    }else{
-      buildingCandidates.push({...common,w:200,d:205,h:220,model:'cityBuilding'});
+function addRoadsideLots(frontages,snow=false){
+  const lots=[];
+  for(const [streetIndex,[[ax,ay],[bx,by]]] of frontages.entries()){
+    const length=Math.hypot(bx-ax,by-ay),horizontal=ay===by;
+    const spacing=streetIndex%2?156:185;
+    for(let along=130;along<length-110;along+=spacing){
+      const curbX=ax+(bx-ax)*along/length,curbY=ay+(by-ay)*along/length;
+      for(const side of [-1,1]){
+        const index=streetIndex*7+Math.floor(along/spacing)+(side+1)/2;
+        if(index%7===0)continue;
+        const [variant,height]=newYorkBuildings[index%newYorkBuildings.length];
+        const downtown=snow?curbX>4100&&curbX<5100:curbX>1200&&curbY>1400&&curbY<3050;
+        const tower=downtown&&index%5===0;
+        const size=tower?138:90+index%4*8,offset=53+size/2;
+        const x=curbX+(horizontal?0:side*offset),y=curbY+(horizontal?side*offset:0);
+        const angle=horizontal?(side===1?Math.PI:0):-side*Math.PI/2;
+        const lot={x,y,w:size,d:size,h:tower?260:Math.min(height,index%3===0?195:150),
+          angle,snow,style:'brick',importedTower:true,model:tower?'building03':'newYork',
+          variant:tower?undefined:variant,frontage:{curbX,curbY,horizontal}};
+        if(lots.some(other=>Math.abs(x-other.x)<(size+other.w)/2+13&&Math.abs(y-other.y)<(size+other.d)/2+13))continue;
+        lots.push(lot);
+      }
     }
   }
+  buildingCandidates.push(...lots);
 }
-for(let row=0;row<12;row++){
-  for(let col=0;col<12;col++){
-    const x=6740+col*108+random()*24;
-    const y=3030+row*97+random()*22;
-    if(nearRoad(x,y,73))continue;
-    const style=['stucco','brick','glass','retail'][(row+col*3)%4];
-    buildingCandidates.push({x,y,w:36+random()*25,d:34+random()*22,
-      h:style==='retail'?15:30+random()*83,style,roof:'#cfab81',desert:true});
-  }
-}
-for(let i=0;i<24;i++){
-  const x=4570+(i%6)*117,y=7090+Math.floor(i/6)*78;
-  if(nearRoad(x,y,61))continue;
-  buildingCandidates.push({x,y,w:33+i%5*3,d:28+i%4*4,h:21+i%4*4,roof:'#b49a82',snow:true});
-}
+addRoadsideLots(juniperFrontages);
+addRoadsideLots([
+  [[4060,6960],[5540,6960]],[[3440,7270],[4220,7270]],
+  [[4420,7360],[5650,7360]],[[4070,7570],[5650,7570]],
+  [[4060,6770],[4060,7270]],[[4860,6760],[4860,7570]]
+],true);
 
 function roadCrossesLot([ax,ay],[bx,by],lot,margin){
   const halfWidth=lot.w/2+9+margin,halfDepth=lot.d/2+7+margin;
@@ -299,52 +409,29 @@ function roadCrossesLot([ax,ay],[bx,by],lot,margin){
 const bridgeSegments=bridges.map(({west,east,y,vertical,width})=>({
   points:vertical?[[y,west],[y,east]]:[[west,y],[east,y]],width
 }));
-export function buildingClearsRoads(lot){
+function buildingClearsRoads(lot){
   return !segments.some(([a,b])=>roadCrossesLot(a,b,lot,roadWidth/2+8))
     &&!bridgeSegments.some(({points:[a,b],width})=>roadCrossesLot(a,b,lot,width/2))
     &&stadiums.every(site=>lot===site||Math.abs(lot.x-site.x)>=(lot.w+site.w)/2+12||Math.abs(lot.y-site.y)>=(lot.d+site.d)/2+12);
 }
-export const buildings=buildingCandidates.filter(buildingClearsRoads);
+export const buildings=buildingCandidates.filter(lot=>!isDesert(lot.x,lot.y)&&buildingClearsRoads(lot));
 
-function addScatteredBuildings({seed,minX,maxX,minY,maxY,onIsland}){
-  const random=()=>{
-    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
-    return seed/4294967296;
-  };
-  const occupied=buildings.filter(lot=>lot.importedTower);
-  const overlaps=(a,b)=>Math.abs(a.x-b.x)<(a.w+b.w)/2+21&&Math.abs(a.y-b.y)<(a.d+b.d)/2+21;
-  let placed=0;
-  for(let attempt=0;attempt<4000&&placed<36;attempt++){
-    const x=Math.round(minX+random()*(maxX-minX));
-    const y=Math.round(minY+random()*(maxY-minY));
-    const [variant,,,height]=newYorkBuildings[Math.floor(random()*newYorkBuildings.length)];
-    const type=random();
-    const style=type<.58?{w:105,d:105,h:height,model:'newYork',variant}
-      :type<.82?{w:155,d:155,h:300,model:'building03'}
-      :{w:200,d:205,h:220,model:'cityBuilding'};
-    const lot={x,y,...style,style:'brick',importedTower:true,fullOnly:true,scattered:true};
-    const width=lot.w/2+30,depth=lot.d/2+30;
-    if(!onIsland(x-width,y-depth)||!onIsland(x-width,y+depth)||
-      !onIsland(x+width,y-depth)||!onIsland(x+width,y+depth))continue;
-    if(occupied.some(other=>overlaps(lot,other))||!nearRoad(x,y,440)||!buildingClearsRoads(lot))continue;
-    buildings.push(lot);
-    occupied.push(lot);
-    placed++;
-  }
-}
-
-addScatteredBuildings({seed:10217,minX:6300,maxX:9680,minY:900,maxY:4760,onIsland:isDesert});
-addScatteredBuildings({seed:42197,minX:3150,maxX:7820,minY:6150,maxY:8170,onIsland:isSnow});
-
+const copperAvenueSegments=COPPER_AVENUES.flatMap(route=>
+  route.slice(1).map((point,i)=>[route[i],point])
+);
 const respawnSegments=[
-  ...segments,
+  ...segments,...copperAvenueSegments,
   ...bridgeSegments.map(({points})=>points)
 ];
 
-export function nearestRoadSpawn(car){
+export function nearestRoadSpawn(car,showCity=cityBridgeEnabled){
   let best=START;
   let bestDistance=Infinity;
-  for(const [[ax,ay],[bx,by]] of respawnSegments){
+  const city=showCity&&(isCityLand(car.x,car.y)||isCityBridge(car.x,car.y));
+  const bridgeLine=[[CITY_BRIDGE.west,CITY_BRIDGE.y],[CITY_BRIDGE.east,CITY_BRIDGE.y]];
+  const candidates=city?[...CITY_STREETS,...CITY_APPROACHES.slice(1),bridgeLine]:
+    showCity?[...respawnSegments,CITY_APPROACHES[0],bridgeLine]:respawnSegments;
+  for(const [[ax,ay],[bx,by]] of candidates){
     const dx=bx-ax,dy=by-ay;
     const t=clamp(((car.x-ax)*dx+(car.y-ay)*dy)/(dx*dx+dy*dy),0,1);
     const x=ax+dx*t,y=ay+dy*t;
@@ -358,10 +445,17 @@ export function nearestRoadSpawn(car){
   return best;
 }
 
-export function isRoad(x,y){
-  return Boolean(bridgeAt(x,y))||nearRoad(x,y,roadWidth/2+3);
+export function isCityApproach(x,y,radius=37){
+  return CITY_APPROACHES.some(([a,b])=>squaredDistanceTo(x,y,a,b)<radius**2);
 }
-export const streetlights=Array.from({length:8},(_,i)=>1610+i*100)
+export function isRoad(x,y,showCity=cityBridgeEnabled){
+  if(bridgeAt(x,y,showCity)||isCopperStreet(x,y)||isDesert(x,y)&&isCopperConnector(x,y,3))return true;
+  if(showCity&&isCityApproach(x,y))return true;
+  if(isCityLand(x,y))return CITY_STREETS.some(([a,b])=>squaredDistanceTo(x,y,a,b)<48**2);
+  return nearRoad(x,y,roadWidth/2+3)||isDesert(x,y)&&
+    copperAvenueSegments.some(([a,b])=>squaredDistanceTo(x,y,a,b)<18**2);
+}
+const streetlights=Array.from({length:8},(_,i)=>1610+i*100)
   .flatMap(y=>[1731,1809].map(x=>({x,y,streetlight:true})))
   .filter(({x,y})=>!nearRoad(x,y,roadWidth/2+3));
 // Pedestrian fixtures use the same pole at a shorter height.
@@ -392,7 +486,8 @@ export function vehicleHitsBuilding({x,y,angle,model=0}){
       &&Math.abs(dx*cos+dy*sin)<halfLength+w*c+d*s
       &&Math.abs(dy*cos-dx*sin)<halfWidth+w*s+d*c;
   };
-  return obstacles.some(b=>{
+  if(hitsCopperBuilding(x,y,angle,halfLength,halfWidth))return true;
+  return hitsCityBuilding(x,y,reachX,reachY,hits)||obstacles.some(b=>{
     if(activeBuildingFootprints.has(b)){
       const footprint=activeBuildingFootprints.get(b);
       return footprint!==null&&hits(footprint.bounds)&&footprint.boxes.some(hits);
@@ -408,14 +503,14 @@ const treeCandidate=(forest=false)=>({
   y:forest?3100+random()*1560:random()*SIZE,
   r:6+random()*(forest?17:12),shade:random(),type:random()
 });
-export const trees=[
+const trees=[
   ...Array.from({length:3200},()=>treeCandidate()),
   ...Array.from({length:430},()=>treeCandidate(true))
-].filter(({x,y,r})=>x<shore(y)-72 && stadiumDistance(x,y)>16 && !bridgeAt(x,y) && !overlapsSidewalk(x,y,Math.max(9.5,r+2))
+].filter(({x,y,r})=>isJuniperLand(x,y,72) && stadiumDistance(x,y)>16 && !bridgeAt(x,y) && !overlapsSidewalk(x,y,Math.max(9.5,r+2))
   && !obstacles.some(b=>Math.abs(x-b.x)<b.w/2+17 && Math.abs(y-b.y)<b.d/2+17));
 for(let i=0;i<680;i++){
   const y=5660+random()*2790,x=2600+random()*5800;
-  if(!isSnow(x,y)||stadiumDistance(x,y)<16||nearRoad(x,y,55)||bridgeAt(x,y)||buildings.some(b=>Math.abs(x-b.x)<43&&Math.abs(y-b.y)<39))continue;
+  if(!isSnow(x,y)||groundHeight(x,y)>165||stadiumDistance(x,y)<16||nearRoad(x,y,55)||bridgeAt(x,y)||buildings.some(b=>Math.abs(x-b.x)<43&&Math.abs(y-b.y)<39))continue;
   const r=7+random()*15,shade=random();
   if(!overlapsSidewalk(x,y,r+2))trees.push({x,y,r,shade,type:0,snow:true});
 }
@@ -433,7 +528,7 @@ for(const [cx,cy,rx,ry,pine] of [
       const edge=((x-cx)/rx)**2+((y-cy)/ry)**2;
       if(edge>1||forestRandom()<edge*.20)continue;
       const r=8+forestRandom()*10;
-      if(x>shore(y)-85||stadiumDistance(x,y)<=16||bridgeAt(x,y)||
+      if(!isJuniperLand(x,y,85)||stadiumDistance(x,y)<=16||bridgeAt(x,y)||
         overlapsSidewalk(x,y,r+3)||obstacles.some(b=>Math.abs(x-b.x)<b.w/2+r+6&&Math.abs(y-b.y)<b.d/2+r+6)||
         trees.some(t=>Math.abs(t.x-x)<10&&Math.abs(t.y-y)<10))continue;
       const type=pine?forestRandom()*.39:.17+forestRandom()*.31;
@@ -463,32 +558,27 @@ export function fallenSceneryPose(item,impact){
     tilt:Math.min(Math.PI*.49,progress*progress*2.1)
   };
 }
-const grass = Array.from({length:20500},()=>({x:random()*SIZE,y:random()*SIZE,r:1+random()*5,a:random()}))
-  .filter(({x,y})=>x<shore(y)-38);
-
-function polygon(c,points,color){
-  c.fillStyle=color;
+function juniperOutline(c,inset=0){
   c.beginPath();
-  points.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));
+  for(let y=0;y<=SIZE;y+=10){
+    const [west,east]=juniperShoreRange(y);
+    c.lineTo(Math.min(west+inset,(west+east)/2),y);
+  }
+  for(let y=SIZE;y>=0;y-=10){
+    const [west,east]=juniperShoreRange(y);
+    c.lineTo(Math.max(east-inset,(west+east)/2),y);
+  }
   c.closePath();
-  c.fill();
-}
-
-function coast(c,width,height,offset,color){
-  c.beginPath();
-  c.moveTo(width,0);
-  for(let y=0;y<=height;y+=10)c.lineTo(shore(y)+offset,y);
-  c.lineTo(width,height);
-  c.closePath();
-  c.fillStyle=color;
-  c.fill();
 }
 
 function drawDesert(c,color){
+  const {north,south}=COPPER_SHORE;
   c.beginPath();
-  for(let y=140;y<5060;y+=20)c.lineTo(8000-desertHalfWidth(y),y);
-  c.lineTo(8000,5060);
-  for(let y=5040;y>140;y-=20)c.lineTo(8000+desertHalfWidth(y),y);
+  c.moveTo(copperShoreRange(north)[0],north);
+  for(let y=north;y<south;y+=18)c.lineTo(copperShoreRange(y)[0],y);
+  c.lineTo(copperShoreRange(south)[0],south);
+  for(let y=south;y>=north;y-=18)c.lineTo(copperShoreRange(y)[1],y);
+  c.lineTo(copperShoreRange(north)[1],north);
   c.closePath();
   c.fillStyle=color;
   c.fill();
@@ -504,89 +594,38 @@ function drawSnow(c,color){
   c.fill();
 }
 
-function drawBridge(c,minimap){
-  c.fillStyle=minimap?'#efa96c':'#64696a';
+function drawFrostpineRelief(c){
+  const {west,east,north,south}=FROSTPINE_MOUNTAIN;
+  const step=48;
+  c.save();
+  c.fillStyle='#eef6f7';
+  for(let y=north;y<south;y+=step)for(let x=west;x<east;x+=step){
+    const px=x+step/2,py=y+step/2;
+    if(!isSnow(px,py))continue;
+    const elevation=groundHeight(px,py,false);
+    if(elevation<22)continue;
+    c.globalAlpha=Math.min(.65,elevation/900);
+    c.fillRect(x,y,step,step);
+  }
+  c.restore();
+}
+
+function drawBridge(c){
+  c.fillStyle='#efa96c';
   for(const {west,east,y,width,vertical} of bridges){
     if(vertical)c.fillRect(y-width/2,west,width,east-west);
     else c.fillRect(west,y-width/2,east-west,width);
   }
 }
-function roads(c,minimap){
+
+function drawRoads(c){
   c.lineJoin='round';
   c.lineCap='round';
-  const trace=()=>{
-    c.beginPath();
-    for(const route of routes) route.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));
-  };
-  trace();
-  c.strokeStyle=minimap?'#bbccb3':'#adad85';
-  c.lineWidth=minimap?43:roadWidth+13;
+  c.beginPath();
+  for(const route of routes) route.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));
+  c.strokeStyle='#bbccb3';
+  c.lineWidth=43;
   c.stroke();
-  if(minimap)return;
-  c.strokeStyle='#d2c9a2';
-  c.lineWidth=roadWidth+3;
-  c.stroke();
-  c.strokeStyle='#5c6260';
-  c.lineWidth=roadWidth;
-  c.stroke();
-  c.strokeStyle='#676c67';
-  c.lineWidth=roadWidth-7;
-  c.stroke();
-  c.setLineDash([14,17]);
-  c.lineWidth=1.8;
-  c.strokeStyle='#e9c57a';
-  c.stroke();
-  c.setLineDash([]);
-}
-
-export function makeMap(){
-  const layer=document.createElement('canvas');
-  layer.width=4000;
-  layer.height=Math.round(layer.width*WORLD_HEIGHT/WORLD_WIDTH);
-  const c=layer.getContext('2d');
-  c.scale(layer.width/WORLD_WIDTH,layer.height/WORLD_HEIGHT);
-  c.fillStyle='#306e7a';
-  c.fillRect(0,0,WORLD_WIDTH,WORLD_HEIGHT);
-  c.save();
-  c.beginPath();c.rect(0,0,WORLD_WIDTH,SIZE);c.clip();
-  c.fillStyle='#628665';
-  c.fillRect(0,0,SIZE,SIZE);
-  for(let i=0;i<95;i++){
-    const x=random()*SIZE,y=random()*SIZE,r=100+random()*440;
-    const gradient=c.createRadialGradient(x,y,0,x,y,r);
-    gradient.addColorStop(0,random()>.45?'#b9ae6946':'#254d4b55');
-    gradient.addColorStop(1,'#6c896100');
-    c.fillStyle=gradient;
-    c.fillRect(x-r,y-r,r*2,r*2);
-  }
-  grass.forEach(({x,y,r,a})=>{
-    c.fillStyle=a>.54?'#d7cf8d36':'#1f473936';
-    c.fillRect(x,y,r,r*.65);
-  });
-  coast(c,WORLD_WIDTH,SIZE,-41,'#cbb784');
-  coast(c,WORLD_WIDTH,SIZE,-13,'#ddca9c');
-  coast(c,WORLD_WIDTH,SIZE,5,'#9bc9ad');
-  coast(c,WORLD_WIDTH,SIZE,16,'#62aaa0');
-  coast(c,WORLD_WIDTH,SIZE,48,'#428a8c');
-  coast(c,WORLD_WIDTH,SIZE,118,'#367b82');
-  coast(c,WORLD_WIDTH,SIZE,245,'#306e7a');
-  for(let i=0;i<640;i++){
-    const y=random()*SIZE,x=shore(y)+24+random()*600;
-    c.fillStyle=i%3?'#b3e3c326':'#deefce5c';
-    c.fillRect(x,y,5+random()*32,1+random()*2);
-  }
-  c.restore();
-  drawDesert(c,'#c89962');
-  drawSnow(c,'#c6dce2');
-  roads(c,false);
-  drawBridge(c,false);
-  c.fillStyle='#626967';
-  for(const site of stadiums){
-    c.beginPath();
-    c.roundRect(site.x-site.w/2,site.y-site.d/2,site.w,site.d,22);
-    c.fill();
-  }
-  return layer;
 }
 
 export const carMarker={
@@ -595,22 +634,73 @@ export const carMarker={
 };
 let markerPaths;
 
-export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[]){
+export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[],remoteCars=[],showCity=false){
   c.clearRect(0,0,width,height);
   c.save();
-  const scale=Math.min(width/(WORLD_WIDTH+220),height/(WORLD_HEIGHT+220));
-  c.translate((width-WORLD_WIDTH*scale)/2,(height-WORLD_HEIGHT*scale)/2);
+  const mapWidth=WORLD_WIDTH;
+  const mapHeight=(showCity?WORLD_HEIGHT:ORIGINAL_WORLD_HEIGHT)-WORLD_MIN_Y;
+  const scale=Math.min(width/(mapWidth+220),height/(mapHeight+220));
+  c.translate((width-mapWidth*scale)/2,(height-mapHeight*scale)/2-WORLD_MIN_Y*scale);
   c.scale(scale,scale);
   c.fillStyle='#284b5b';
-  c.fillRect(0,0,WORLD_WIDTH,WORLD_HEIGHT);
+  c.fillRect(0,WORLD_MIN_Y,WORLD_WIDTH,mapHeight);
+  c.fillStyle='#857e5c';
+  juniperOutline(c);c.fill();
   c.fillStyle='#385950';
-  c.fillRect(0,0,SIZE,SIZE);
-  coast(c,WORLD_WIDTH,SIZE,-35,'#857e5c');
-  coast(c,WORLD_WIDTH,SIZE,0,'#284b5b');
-  drawDesert(c,'#a68255');
+  juniperOutline(c,32);c.fill();
+  drawDesert(c,'#c19c64');
+  c.fillStyle='#ad865a';
+  for(const {x,y,w,d,angle} of COPPER_BUILDINGS){
+    c.save();c.translate(x,y);c.rotate(angle);c.fillRect(-w/2,-d/2,w,d);c.restore();
+  }
+  c.strokeStyle='#a98250';
+  c.lineWidth=8;
+  for(const [x,y,rx,ry,,lean] of COPPER_DUNES){
+    if(copperTerrainHeight(x,y)<6)continue;
+    c.beginPath();c.ellipse(x,y,rx*.62,ry*.65,lean,-1.25,1.3);c.stroke();
+  }
   drawSnow(c,'#77929a');
-  roads(c,true);
-  drawBridge(c,true);
+  drawFrostpineRelief(c);
+  if(showCity){
+    c.fillStyle='#d9ba80';
+    c.beginPath();
+    cityShoreline().forEach(([x,y],index)=>index?c.lineTo(x,y):c.moveTo(x,y));
+    c.closePath();
+    c.fill();
+    c.fillStyle='#626c67';
+    for(const {x,y} of CITY_DISTRICTS){
+      c.fillRect(x-CITY_HALF_SIZE,y-CITY_HALF_SIZE,CITY_HALF_SIZE*2,CITY_HALF_SIZE*2);
+    }
+    c.fillRect(CITY.x-945,CITY.y-215,410,430);
+    c.strokeStyle='#a7b5ab';
+    c.lineWidth=65;
+    for(const [[ax,ay],[bx,by]] of [...CITY_STREETS,...CITY_APPROACHES]){
+      c.beginPath();c.moveTo(ax,ay);c.lineTo(bx,by);c.stroke();
+    }
+    c.fillStyle='#efa96c';
+    c.fillRect(CITY_BRIDGE.west,CITY_BRIDGE.y-CITY_BRIDGE.width/2,CITY_BRIDGE.east-CITY_BRIDGE.west,CITY_BRIDGE.width);
+  }
+  drawRoads(c);
+  c.strokeStyle='#bbccb3';
+  c.lineWidth=36;
+  for(const avenue of COPPER_AVENUES){
+    c.beginPath();
+    avenue.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));
+    c.stroke();
+  }
+  drawBridge(c);
+  if(labels){
+    const [x,y]=COPPER_JUNCTION;
+    c.fillStyle='#fff2d7';
+    c.beginPath();c.arc(x,y,4/scale,0,Math.PI*2);c.fill();
+    c.font=`600 ${13/scale}px system-ui`;
+    c.textAlign='center';
+    c.textBaseline='top';
+    c.strokeStyle='#30352f';
+    c.lineWidth=3/scale;
+    c.strokeText('Copper Junction',x,y+7/scale);
+    c.fillText('Copper Junction',x,y+7/scale);
+  }
   c.fillStyle='#acb5aa';
   for(const site of stadiums){
     c.beginPath();
@@ -622,9 +712,10 @@ export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[]){
     c.textAlign='center';
     c.textBaseline='middle';
     c.fillStyle='#fff2d7';
-    for(const [name,x,y] of [[ISLAND_NAMES.coast,1500,330],[ISLAND_NAMES.desert,8200,850],[ISLAND_NAMES.snow,5620,6280]]){
+    for(const [name,x,y] of [[ISLAND_NAMES.coast,1500,330],[ISLAND_NAMES.desert,DESERT_CENTER,410],[ISLAND_NAMES.snow,5620,6280]]){
       c.fillText(name,x,y);
     }
+    if(showCity)c.fillText(ISLAND_NAMES.city,CITY.x+545,CITY.y-1570);
   }
   for(const item of landmarks){
     c.fillStyle=item.kind&&item.kind!=='town'?'#f0be78':'#8ba49b';
@@ -657,6 +748,18 @@ export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[]){
     c.arc(patrol.x,patrol.y,3.5/scale,0,Math.PI*2);
     c.fill();
   }
+  for(const remote of remoteCars){
+    if(!showCity&&(isCityLand(remote.x,remote.y)||isCityBridge(remote.x,remote.y)))continue;
+    c.fillStyle=remote.police?'#ff746e':'#77dcea';
+    c.beginPath();c.arc(remote.x,remote.y,(labels?7:4)/scale,0,Math.PI*2);c.fill();
+    if(labels){
+      c.fillStyle=remote.police?'#ffd9d6':'#e0faff';
+      c.font=`700 ${14/scale}px system-ui`;
+      c.textAlign='center';
+      c.textBaseline='bottom';
+      c.fillText(remote.name,remote.x,remote.y-10/scale);
+    }
+  }
   c.translate(car.x,car.y);
   c.rotate(car.angle+Math.PI/2);
   const iconScale=(labels?1.1:.95)/scale;
@@ -672,104 +775,6 @@ export function drawMinimap(c,width,height,car,targets,labels=false,patrols=[]){
   c.restore();
 }
 
-function drawTree(c,t){
-  const {x,y,r,shade,type}=t;
-  c.fillStyle='#223c3458';
-  c.beginPath();c.ellipse(x+r*.75,y+r*.45,r*1.55,r*.62,-.28,0,7);c.fill();
-  c.fillStyle='#524a34'; c.fillRect(x-1.8,y-r*.45,3.6,r*.72);
-  if(type>.37){
-    const colors=shade>.6?['#254f43','#3c7055','#68936b']:['#254c40','#38674c','#577c53'];
-    for(let row=0;row<3;row++){
-      const w=r*(1-row*.2), bottom=y-r*(.05+row*.45), top=bottom-r*1.2;
-      polygon(c,[[x-w,bottom],[x,top],[x+w,bottom],[x,bottom+r*.24]],colors[0]);
-      polygon(c,[[x-w,bottom],[x,top],[x,bottom+r*.24]],colors[row===2?2:1]);
-    }
-  } else {
-    for(let i=0;i<3;i++){
-      c.fillStyle=['#2a5140','#4b744e','#72935f'][i];
-      c.beginPath();c.ellipse(x+(i-1)*r*.24,y-r*(.6+i*.39),r*(1-i*.16),r*.68,0,0,7);c.fill();
-    }
-  }
-}
-function drawBreakable(c,item){
-  if(!item.streetlight){drawTree(c,item);return;}
-  c.fillStyle='#53666a';
-  const height=item.footpathLamp?8:13.6;
-  c.fillRect(item.x-.35,item.y-height,.7,height);
-  c.fillStyle='#d4d2ad';
-  c.fillRect(item.x-.83,item.y-height,1.65,1.1);
-}
-
-function drawBuilding(c,b){
-  const {x,y,w,d,h,roof}=b;
-  const l=x-w/2,r=x+w/2,t=y-d/2,f=y+d/2;
-  polygon(c,[[l,f],[r,f],[r+h*1.2,f+9],[r+h*1.2,t+6],[l,t]],'#273b365f');
-  polygon(c,[[l,f-h],[r,f-h],[r,f],[l,f]],'#aa8d6c');
-  polygon(c,[[r,t-h],[r,f-h],[r,f],[r,t]],'#756f57');
-  polygon(c,[[l,t-h],[r,t-h],[r,f-h],[l,f-h]],roof);
-  polygon(c,[[l,(t+f)/2-h-5],[r,(t+f)/2-h-5],[r,f-h],[l,f-h]],'#291c1726');
-  c.fillStyle='#544f43';
-  c.fillRect(x-3,f-8,6,8);
-  c.fillStyle='#e2d5aa';
-  c.fillRect(l+6,f-10,6,4);
-  c.fillRect(r-12,f-10,6,4);
-}
-function drawCar(c,car){
-  const model=CARS[car.model??0];
-  const {paint,roof,length=1,width=1}=car.police?{paint:['#252c3c',null,'#aab7c3'],roof:'#596d88'}:model;
-  c.save();
-  c.translate(car.x,car.y);
-  c.rotate(car.angle);
-  c.scale(length,width);
-  c.fillStyle='#17292380'; c.beginPath(); c.ellipse(2,3,20,11,0,0,7);c.fill();
-  c.fillStyle='#192926';
-  for(const x of [-10,8])for(const y of [-9,6])c.fillRect(x-4,y,8,4);
-  c.beginPath();c.roundRect(-17,-8.8,34,17.6,4);c.fillStyle=paint[0];c.fill();
-  c.beginPath();c.roundRect(-16,-8.3,33,15.7,4);c.fillStyle=paint[2];c.fill();
-  polygon(c,[[-11,-6],[-6,-5],[4,-5],[8,-6],[8,6],[4,5],[-6,5],[-11,6]],'#30464e');
-  c.fillStyle=roof;c.fillRect(-5,-4.7,8,9.4);
-  c.fillStyle='#ffdaa1';c.fillRect(13,-6.8,3,3.5);c.fillRect(13,3.3,3,3.5);
-  c.fillStyle='#ffac82';c.fillRect(-16,-7,2,4);c.fillRect(-16,3,2,4);
-  c.restore();
-}
-
-export function renderWorld(c,map,camera,width,height,car,targets,time,patrols=[],brokenScenery){
-  const {x,y,zoom}=camera;
-  c.fillStyle='#496850';c.fillRect(0,0,width,height);
-  c.save();
-  c.translate(width/2,height*.54);
-  c.scale(zoom,zoom);
-  c.translate(-x,-y);
-  c.drawImage(map,0,0,WORLD_WIDTH,WORLD_HEIGHT);
-  const visible=o=>Math.abs(o.x-x)<width/(zoom*2)+110 && Math.abs(o.y-y)<height/(zoom*1.7)+120;
-  const scenery=[...breakableScenery.filter(visible),...buildings.filter(visible),...patrols.filter(visible),car].sort((a,b)=>a.y-b.y);
-  for(const target of targets.filter(visible)){
-    const pulse=1+Math.sin(time*3)*.12;
-    c.beginPath();c.arc(target.x,target.y,28*pulse,0,7);c.fillStyle='#f4b85a30';c.fill();
-    c.lineWidth=2;c.strokeStyle='#ffdc89';c.stroke();
-    c.beginPath();c.moveTo(target.x,target.y);c.lineTo(target.x,target.y-36);c.stroke();
-    polygon(c,[[target.x,target.y-45],[target.x+7,target.y-38],[target.x,target.y-31],[target.x-7,target.y-38]],'#ffdc89');
-  }
-  for(const item of scenery) {
-    if(item===car||item.police||item.traffic)drawCar(c,item);
-    else if(item.roof)drawBuilding(c,item);
-    else {
-      const impact=brokenScenery?.get(item);
-      if(!impact){drawBreakable(c,item);continue;}
-      const radius=sceneryRadius(item);
-      c.fillStyle=item.streetlight?'#53666a':'#976f47';
-      c.beginPath();c.arc(item.x,item.y,radius,0,7);c.fill();
-      const pose=fallenSceneryPose(item,impact);
-      c.save();
-      c.translate(pose.x,pose.y);
-      c.rotate(impact.angle+pose.tilt);
-      drawBreakable(c,{...item,x:0,y:0});
-      c.restore();
-    }
-  }
-  c.restore();
-}
-
 export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED,brokenScenery){
   const road=isRoad(car.x,car.y);
   const reversePedal=keys.has('brakeReverse');
@@ -777,9 +782,14 @@ export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED,brokenScenery){
   const throttle=reversePedal?(pedalBraking?0:-1):Number(keys.has('up'))-Number(keys.has('down'));
   const steering=Number(keys.has('right'))-Number(keys.has('left'));
   const braking=keys.has('brake')||pedalBraking;
-  if(pedalBraking)car.speed=Math.max(0,car.speed-135*dt);
-  car.speed+=throttle*119*dt;
-  car.speed*=Math.exp(-(braking?4.3:throttle?.44:.49)*dt);
+  const airborne=car.lift>0;
+  if(airborne){
+    car.speed*=Math.exp(-.10*dt);
+  }else{
+    if(pedalBraking)car.speed=Math.max(0,car.speed-135*dt);
+    car.speed+=throttle*119*dt;
+    car.speed*=Math.exp(-(braking?4.3:throttle?.44:.49)*dt);
+  }
   car.speed=clamp(car.speed,-62,speedLimit);
   if(!throttle&&Math.abs(car.speed)<.8)car.speed=0;
   const speed=Math.abs(car.speed);
@@ -787,13 +797,14 @@ export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED,brokenScenery){
   car.steer=(car.steer??0)+(desiredSteer-(car.steer??0))*(1-Math.exp(-dt*10));
   const turnRate=Math.tan(car.steer)*car.speed/19.7;
   const previousAngle=car.angle;
-  car.angle+=clamp(turnRate,-1.65,1.65)*(braking?1.18:1)*dt;
+  const turningGrip=airborne?.08:braking?1.18:1;
+  car.angle+=clamp(turnRate,-1.65,1.65)*turningGrip*dt;
   const x=car.x+Math.cos(car.angle)*car.speed*dt;
   const y=car.y+Math.sin(car.angle)*car.speed*dt;
   const span=bridgeAt(car.x,car.y);
   const along=span?.vertical?y:x,across=span?.vertical?x:y;
   const railHit=span&&along>span.west+8&&along<span.east-8&&Math.abs(across-span.y)>span.width/2-7;
-  car.boundaryHit=!railHit&&(x<35||x>WORLD_WIDTH-35||y<35||y>WORLD_HEIGHT-35
+  car.boundaryHit=!railHit&&(x<35||x>WORLD_WIDTH-35||(y<35&&!isDesert(x,y))||y<WORLD_MIN_Y+35||y>WORLD_HEIGHT-35
     ||(!isLand(x,y)&&!bridgeAt(x,y)));
   if(car.boundaryHit)return road;
   const blocked=vehicleHitsBuilding({x,y,angle:car.angle,model:car.model});
@@ -809,6 +820,7 @@ export function drive(car,keys,dt,speedLimit=CAR_TOP_SPEED,brokenScenery){
   for(const item of breakableScenery){
     const dx=item.x-x,dy=item.y-y;
     if(Math.abs(dx)>reach||Math.abs(dy)>reach||brokenScenery?.has(item))continue;
+    if(cityBridgeEnabled&&isCityApproach(item.x,item.y,46))continue;
     const along=Math.max(0,Math.abs(dx*cos+dy*sin)-halfLength);
     const lateral=dy*cos-dx*sin;
     const across=Math.max(0,Math.abs(lateral)-halfWidth);

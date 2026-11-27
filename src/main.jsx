@@ -1,16 +1,18 @@
-import {createTraffic,slidePastTraffic,updateTraffic} from './traffic';
+import {addCityTraffic,createTraffic,slidePastTraffic,updateTraffic} from './traffic';
 import {BUST_SECONDS,HOME_DELAY,createPursuit,updatePursuit,recordPursuit} from './pursuit';
 import {LIGHTING_PRESETS} from './lighting';
 import {CARS,cycleCar} from './cars';
 import {CHECKPOINT_COUNT,createChase,restartChase,delayChase,updateChase,recordChase,checkpointDirections} from './chase';
 import React, {useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {START,KMH_PER_SPEED_UNIT,ISLAND_NAMES,ISLAND_STARTS,islandName,isRoad,nearestRoadSpawn,carMarker,drive,setBuildingFootprints,drawMinimap} from './world';
+import {START,KMH_PER_SPEED_UNIT,ISLAND_NAMES,ISLAND_STARTS,islandName,isRoad,nearestRoadSpawn,carMarker,drive,updateCarJump,setCityBridgeEnabled,setBuildingFootprints,drawMinimap} from './world';
 import {makeScene,WHEEL_RADIUS} from './scene3d';
 import './style.css';
 import {createEngine} from './engine';
+import {joinMultiplayer} from './multiplayer';
+import {isCityLand} from './city-island';
 
-const parked={boundaryHit:false,speed:0,wheelSpin:0,steer:0,pitch:0,braking:false};
+const parked={boundaryHit:false,lift:0,verticalSpeed:0,airPitch:0,landingCompression:0,landingVelocity:0,speed:0,wheelSpin:0,steer:0,pitch:0,braking:false};
 const bindings={KeyW:'up',ArrowUp:'up',KeyS:'down',ArrowDown:'down',KeyA:'left',ArrowLeft:'left',KeyD:'right',ArrowRight:'right',Space:'brake'};
 const formatTime=seconds=>{
   const cs=Math.floor(seconds*100);
@@ -56,10 +58,14 @@ function App(){
   const [wideView,setWideView]=useState(false);
   const ready=useRef(false), useBasicGraphics=useRef(null), useFullGraphics=useRef(null);
   const [basicGraphics,setBasicGraphics]=useState(false);
+  const [cityAvailable,setCityAvailable]=useState(false);
+  const cityReady=useRef(false);
   const [loading,setLoading]=useState({progress:0,state:'loading'});
   const race=useRef(null);
   const pursuit=useRef(null);
   const traffic=useRef(null);
+  const multiplayer=useRef(null);
+  const [session,setSession]=useState(null);
   const pursuitBestRef=useRef(null);
   const [pursuitBest,setPursuitBest]=useState(null);
   const [policeMode,setPoliceMode]=useState(null);
@@ -105,7 +111,7 @@ function App(){
     if(window.matchMedia('(pointer: coarse)').matches)enterLandscape();
     held.current.clear();
     started.current=true;
-    traffic.current=createTraffic();
+    traffic.current=createTraffic(cityReady.current);
     try {
       engine.current??=createEngine();
       engine.current?.setMuted(muted.current);
@@ -167,14 +173,24 @@ function App(){
   }
 
   function chooseIsland(key){
+    if(key==='city'&&(basicGraphics||!cityAvailable))return;
     startingIsland.current=key;
     setSelectedIsland(key);
-    reset();
+    if(multiplayer.current)multiplayer.current.act(key);
+    else reset();
     setIslandPickerOpen(false);
     setPhoneMenu(false);
   }
 
-  function respawn(){
+  function respawn(boundary=false){
+    if(multiplayer.current){
+      if(boundary===true||!multiplayer.current.racing){
+        multiplayer.current.act(boundary===true?'boundary':'respawn');
+        car.current.boundaryHit=false;
+        Object.assign(car.current,{speed:0,lift:0,verticalSpeed:0,airPitch:0,landingCompression:0,landingVelocity:0});
+      }
+      return;
+    }
     const spawn=nearestRoadSpawn(car.current);
     pursuit.current?.patrols.forEach(patrol=>{patrol.closeEncounter=false;});
     Object.assign(car.current,spawn,parked);
@@ -195,7 +211,36 @@ function App(){
     try {localStorage.setItem('coastline-chase-pursuit-best',JSON.stringify(best));} catch {}
   }
 
+  function startMultiplayer(){
+    reset();
+    traffic.current=[];
+    setSession({status:'Joining multiplayer…',number:null,others:[]});
+    multiplayer.current=joinMultiplayer(car,()=>cityReady.current,roster=>{
+      setSession(session=>session&&({...session,...roster}));
+    },status=>{
+      setSession(session=>session&&session.status!==status?{...session,status}:session);
+    },(pose,spawn)=>{
+      if(spawn){
+        const {x,y,angle,model}=pose;
+        Object.assign(car.current,parked,{x,y,angle,model});
+        car.current.smokeGeneration++;
+        Object.assign(camera.current,{x,y,angle});
+      }else{
+        Object.assign(car.current,{x:pose.x,y:pose.y,angle:pose.angle,speed:car.current.speed*-.25,lift:0,verticalSpeed:0,airPitch:0,landingCompression:0,landingVelocity:0});
+      }
+    });
+  }
+
+  function leaveMultiplayer(){
+    multiplayer.current?.leave();
+    multiplayer.current=null;
+    setSession(null);
+    traffic.current=createTraffic(cityReady.current);
+    car.current.police=false;
+  }
+
   function goHome(){
+    if(multiplayer.current)leaveMultiplayer();
     if(pursuit.current)savePursuit(pursuit.current);
     started.current=false;
     held.current.clear();
@@ -256,7 +301,7 @@ function App(){
       }
     } catch {}
     const onKey=e=>{
-      if(!ready.current)return;
+      if(!ready.current||e.target.closest?.('select'))return;
       if(!started.current){
         if(e.target.closest?.('input'))return;
         if(e.type==='keydown' && (e.code==='ArrowLeft'||e.code==='ArrowRight')){
@@ -328,19 +373,22 @@ function App(){
       for(const impact of brokenScenery.values())impact.age=Math.min(.85,impact.age+dt);
       const controls=new Set(held.current.values());
       const player=car.current;
+      const lan=multiplayer.current;
+      player.police=lan?.police??false;
       const {x,y,speed,angle}=player;
-      const canDrive=pausedAt.current===null&&police?.bustedAt==null;
+      const canDrive=pausedAt.current===null&&police?.bustedAt==null&&(!lan||lan.ready);
       const wasOnRoad=canDrive?drive(player,controls,dt,undefined,brokenScenery):isRoad(player.x,player.y);
       const hitBoundary=player.boundaryHit;
       const civilians=traffic.current??[];
       if(canDrive&&!hitBoundary){
-        const collision=slidePastTraffic(player,{x,y,angle},civilians);
-        if(collision?.police&&!police){
+        const collision=slidePastTraffic(player,{x,y,angle,model:player.model},lan?lan.obstacles():civilians);
+        if(!lan&&collision?.police&&!police){
           launchPursuit(collision,now);
           police=pursuit.current;
         }
       }
-      if(hitBoundary)respawn();
+      if(hitBoundary)respawn(true);
+      else if(canDrive)updateCarJump(player,{x,y,angle,model:player.model},dt);
       const road=hitBoundary||wasOnRoad;
       const travel=hitBoundary?0:(player.x-x)*Math.cos(player.angle)+(player.y-y)*Math.sin(player.angle);
       player.wheelSpin=(player.wheelSpin-travel/WHEEL_RADIUS)%(Math.PI*2);
@@ -378,7 +426,8 @@ function App(){
       const zoom=Math.max(.79,Math.min(1.45,width/940))-Math.abs(player.speed)*.0006;
       cam.zoom+=(zoom-cam.zoom)*follow;
       const activeScene=renderBasic?basicScene:scene;
-      activeScene.render(cam,player,targets,wide.current,null,dt,road,controls.has('up')&&!player.braking,lightingTime.current,patrols,now,civilians,brokenScenery);
+      const remoteCars=lan?.render(dt)??[];
+      activeScene.render(cam,player,targets,wide.current,null,dt,road,controls.has('up')&&!player.braking,lightingTime.current,patrols,now,lan?remoteCars:civilians,brokenScenery);
       if(now-update>65){
         update=now;
         engine.current?.update(player.speed,controls.has('up')||controls.has('down')||(player.speed<0&&controls.has('brakeReverse')),muted.current||pausedAt.current!==null||police?.bustedAt!=null||document.hidden);
@@ -386,7 +435,7 @@ function App(){
         if(police&&police.bustedAt===null)setPoliceMode({contact:police.contact,busted:false,patrolCount:police.patrols.length,survived:police.survived,escaped:police.escaped});
         if(active)setTrial({cleared:CHECKPOINT_COUNT-targets.length,time:active.time,finished:targets.length===0,directions:checkpointDirections(targets,player)});
         for(const canvas of [radar.current,largeRadar.current]) {
-          if(canvas)drawMinimap(canvas.getContext('2d'),canvas.width,canvas.height,player,targets,canvas===largeRadar.current,patrols);
+          if(canvas)drawMinimap(canvas.getContext('2d'),canvas.width,canvas.height,player,targets,canvas===largeRadar.current,patrols,remoteCars,!renderBasic&&scene.cityAvailable);
         }
       }
       raf=requestAnimationFrame(frame);
@@ -413,8 +462,16 @@ function App(){
         scene=null;
         setLoading({progress:0,state:'idle'});
       }
+      if(startingIsland.current==='city'||isCityLand(car.current.x,car.current.y)){
+        startingIsland.current='coast';
+        setSelectedIsland('coast');
+        reset();
+      }
       setBuildingFootprints(new Map());
       renderBasic=true;
+      cityReady.current=false;
+      setCityBridgeEnabled(false);
+      if(traffic.current)traffic.current=traffic.current.filter(car=>!car.city);
       resize();
       setBasicGraphics(true);
       startRendering();
@@ -423,6 +480,12 @@ function App(){
       setBuildingFootprints(scene.buildingFootprints);
       renderBasic=false;
       setBasicGraphics(false);
+      cityReady.current=scene.cityAvailable;
+      setCityBridgeEnabled(scene.cityAvailable);
+      if(cityReady.current&&started.current&&!multiplayer.current&&traffic.current&&!traffic.current.some(car=>car.city)){
+        addCityTraffic(traffic.current);
+      }
+      setCityAvailable(scene.cityAvailable);
       setLoading({progress:100,state:'ready'});
       startRendering();
     }
@@ -461,6 +524,7 @@ function App(){
     useFullGraphics.current();
     return ()=>{
       disposed=true;
+      setCityBridgeEnabled(false);
       ready.current=false;
       setBuildingFootprints(new Map());
       useBasicGraphics.current=null;
@@ -469,6 +533,8 @@ function App(){
       observer.disconnect();
       scene?.destroy();
       basicScene?.destroy();
+      multiplayer.current?.leave();
+      multiplayer.current=null;
       engine.current?.close();
       engine.current=null;
       cancelAnimationFrame(raf);
@@ -487,6 +553,17 @@ function App(){
       held.current.set(e.pointerId,action);
     }} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}><TouchIcon action={action}/></button>;
   }
+  const islandOptions=Object.entries(ISLAND_NAMES).filter(([key])=>key!=='city'||cityAvailable&&!basicGraphics);
+  const inCity=stats.island===ISLAND_NAMES.city;
+  const lobby=session?.lobby;
+  const roomHost=Boolean(lobby&&lobby.host===session.number);
+  const invitations=session?.invitations??[];
+  const playerName=number=>number===session?.number?session.name:
+    session?.others.find(player=>player.number===number)?.name??'Player';
+  const roomAction=action=>multiplayer.current?.act(action);
+  const lanRound=session?.pursuit;
+  const lanChase=lanRound?.phase==='chase'||lanRound?.phase==='countdown';
+  const isRunner=lanRound?.runner===session?.number;
   const heading=['N','NE','E','SE','S','SW','W','NW'][((Math.round((stats.angle+Math.PI/2)/(Math.PI/4))%8)+8)%8];
 
   return <main className="shell">
@@ -528,7 +605,7 @@ function App(){
       {driving&&<button className="square phone-menu-button" type="button"
         aria-expanded={phoneMenu} aria-controls="phone-game-menu"
         onClick={()=>{held.current.clear();setPhoneMenu(open=>!open);}}>
-        Menu
+        {session?.number?`Menu (${session.others.length+1})`:'Menu'}
       </button>}
       <div className={driving?'top-actions':'top-actions landing-actions'}>
         {(!driving||basicGraphics)&&<button className="basic-graphics graphics-switch" type="button"
@@ -544,7 +621,7 @@ function App(){
           <span>{soundOff?'OFF':'SND'}</span>
         </button>
         {<button className="square camera" title="Switch camera (C)" aria-label="Wide chase camera" aria-pressed={wideView} onClick={switchCamera}><span>CAM</span></button>}
-        <button className="square" title="Respawn on nearest road (R)" aria-label="Respawn on nearest road" onClick={respawn} disabled={paused}><Icon name="reset"/></button>
+        <button className="square" title="Respawn on nearest road (R)" aria-label="Respawn on nearest road" onClick={respawn} disabled={paused||lanChase}><Icon name="reset"/></button>
         {<div className="lighting-controls panel" role="group" aria-label="Time of day">
           {Object.keys(LIGHTING_PRESETS).map(label=>(
             <button type="button" key={label} aria-pressed={lightingPreset===label} onClick={()=>selectLighting(label)}>{label}</button>
@@ -562,7 +639,7 @@ function App(){
       </div>
       <fieldset className="island-selector">
         <legend>Start from</legend>
-        {Object.entries(ISLAND_NAMES).map(([key,name])=><label key={key}>
+        {islandOptions.map(([key,name])=><label key={key}>
           <input type="radio" name="starting-island" checked={selectedIsland===key} onChange={()=>chooseIsland(key)}/>
           <span>{name}</span>
         </label>)}
@@ -584,14 +661,14 @@ function App(){
         <div className="mode"><span/>CURRENT LOCATION</div>
         <h2>{stats.island??islandName(START.x,START.y)}</h2>
         <button className="start island-switch" type="button" aria-expanded={islandPickerOpen}
-          aria-controls="island-destinations" onClick={()=>setIslandPickerOpen(open=>!open)}>Switch island</button>
-        <div className="island-destinations" id="island-destinations" hidden={!islandPickerOpen}>
-          {Object.entries(ISLAND_NAMES).map(([key,name])=>(
+          aria-controls="island-destinations" disabled={lanChase} onClick={()=>setIslandPickerOpen(open=>!open)}>Switch island</button>
+        <div className="island-destinations" id="island-destinations" hidden={!islandPickerOpen||lanChase}>
+          {islandOptions.map(([key,name])=>(
             <button type="button" key={key} disabled={stats.island===name} onClick={()=>chooseIsland(key)}>{name}</button>
           ))}
         </div>
       </section>}
-      {!policeMode&&<section className="mode-card panel chase-card">
+      {!inCity&&!session&&!policeMode&&<section className="mode-card panel chase-card">
         {trial&&<div className="mode"><span/>CHECKPOINT CHASE</div>}
         <h2>{trial?.finished?'Chase complete':paused?'Chase paused':trial?'Find the checkpoints':'Checkpoint Chase'}</h2>
         <p>{trial?`${trial.cleared}/${CHECKPOINT_COUNT} checkpoints cleared`:'Find five randomly placed checkpoints across the islands.'}</p>
@@ -605,7 +682,7 @@ function App(){
           <button className="start chase-restart" onClick={retryTrial}>Restart</button>
         </div>:<button className="start" onClick={startTrial}><Icon name="flag" size={16}/>{trial?'New chase':'Start chase'}</button>}
       </section>}
-      {(!trial||trial.finished)&&<section className="mode-card panel pursuit-card">
+      {!inCity&&!session&&(!trial||trial.finished)&&<section className="mode-card panel pursuit-card">
         {policeMode&&<div className="mode"><span/>POLICE PURSUIT</div>}
         <h2>{policeMode?'Lose the patrols':'Police Pursuit'}</h2>
         <p>{policeMode?`${policeMode.patrolCount} patrol cars in pursuit`:'Outrun four patrol cars. Another joins every 10 seconds and the patrols get faster.'}</p>
@@ -620,12 +697,73 @@ function App(){
       </section>}
       {!trial&&!policeMode&&<section className="mode-card panel multiplayer-card">
         <h2>Multiplayer</h2>
-        <p>Coming soon</p>
-        <button type="button" className="start" disabled>Play Multiplayer</button>
+        {session?<>
+          <p role="status">{session.number?`${session.others.length+1} online`:session.status}</p>
+          {session.notice&&<p role="status">{session.notice}</p>}
+          {lobby?<div className="lan-room">
+            <h3>{playerName(lobby.host)}’s pursuit room</h3>
+            <ul className="player-list" aria-label="Room members">
+              {lobby.members.map(number=><li key={number}>
+                {playerName(number)}{number===session.number?' (you)':''} · {number===lobby.runner?'Runner':'Police'}
+              </li>)}
+            </ul>
+            {roomHost&&!lanChase&&<>
+              <label>Runner
+                <select value={lobby.runner} onChange={event=>roomAction(`runner:${event.target.value}`)}>
+                  {lobby.members.map(number=><option key={number} value={number}>
+                    {playerName(number)}{number===session.number?' (you)':''}
+                  </option>)}
+                </select>
+              </label>
+              <button type="button" className="start" disabled={lobby.members.length<2}
+                onClick={()=>{roomAction('start-room');setPhoneMenu(false);}}>Start pursuit</button>
+              {lobby.members.length<2&&<p>Invite at least one player to start.</p>}
+            </>}
+            <button type="button" className="square" onClick={()=>roomAction('leave-room')}>
+              {roomHost?'Close room':'Leave room'}
+            </button>
+          </div>:<button type="button" className="start" disabled={!session.number}
+            onClick={()=>roomAction('create-room')}>Create pursuit room</button>}
+          {session.number&&<ul className="player-list online-list" aria-label="Online players">
+            <li>{session.name} (you)</li>
+            {session.others.map(({number,name,available})=><li key={number}>
+              <span>{name}</span>
+              {roomHost&&!lanChase&&available&&
+                <button type="button" className="square" disabled={lobby.pending.includes(number)}
+                  onClick={()=>roomAction(`invite:${number}`)} aria-label={`Invite ${name}`}>
+                  {lobby.pending.includes(number)?'Invited':'Invite'}
+                </button>}
+            </li>)}
+          </ul>}
+          <button type="button" className="start" onClick={leaveMultiplayer}>Leave multiplayer</button>
+        </>:<>
+          <p>Drive together on the same game host.</p>
+          <button type="button" className="start" onClick={startMultiplayer}>Play Multiplayer</button>
+        </>}
       </section>}
     </aside>
     <div className="touch" aria-label="Touch controls"><div>{touch('left','Left')}{touch('right','Right')}</div><div>{touch('brakeReverse','Brake or hold to reverse')}{touch('up','Accelerate')}</div></div>
     </div>
+    {!!invitations.length&&<section className="lan-invitations panel" aria-label="Pursuit invitations">
+      {invitations.map(host=><div key={host}>
+        <p>{playerName(host)} invited you to a pursuit room.</p>
+        <div className="lan-invitation-actions">
+          <button type="button" className="start" onClick={()=>roomAction(`accept:${host}`)}>Accept</button>
+          <button type="button" className="square" onClick={()=>roomAction(`decline:${host}`)}>Decline</button>
+        </div>
+      </div>)}
+    </section>}
+    {lanRound&&<section className="lan-round panel" aria-label="Multiplayer pursuit">
+      <strong>{lanChase?(isRunner?'Runner':'Police'):
+        lanRound.phase==='caught'?'Police caught the runner':lanRound.phase==='escaped'?'The runner escaped':'Pursuit ended'}</strong>
+      {lanRound.phase==='countdown'&&<p>Starts in {lanRound.seconds}</p>}
+      {lanRound.phase==='chase'&&<>
+        <p><span className="lan-round-objective">{isRunner?'Lose the police':`Catch ${playerName(lanRound.runner)}`} · </span>{lanRound.seconds}s<span className="lan-round-objective"> left</span></p>
+        <label><span className="lan-round-objective">Capture</span>
+          <progress aria-label="Capture progress" max={BUST_SECONDS} value={lanRound.contact}/>
+        </label>
+      </>}
+    </section>}
     <div className="compass" aria-label={`Heading ${heading}`}><span/> <b>{heading}</b> <span/></div>
     <footer className="bottom">
       <section className="speed panel" aria-label="Speedometer">
@@ -652,6 +790,8 @@ function App(){
             <path d={carMarker.body} fill="#fff4cf"/>
             <path d={carMarker.glass} fill="#345358"/>
           </svg>Your car</span>
+          {session&&<span><i className="remote-marker" aria-hidden="true"/>{lanChase?'Runner':'Other players'}</span>}
+          {lanChase&&<span><i className="officer-marker" aria-hidden="true"/>Police</span>}
           {trial&&!trial.finished&&<span><i aria-hidden="true"/>Remaining checkpoints</span>}
         </p>
       </section>

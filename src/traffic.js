@@ -1,20 +1,16 @@
-import {isLand,isRoad,routeWaypoints,vehicleHitsBuilding} from './world.js';
+import {COPPER_GRID,copperCornerTrim,COPPER_ROUTES,COPPER_THROUGH_AVENUES,COPPER_DISTRICT_ENTRIES,COPPER_NORTH_EDGE,COPPER_SOUTH_EDGE,COPPER_EAST_EDGE,COPPER_JUNCTION} from './copper-island.js';
+import {CITY,CITY_DISTRICTS} from './city-island.js';
+import {CARS} from './cars.js';
+import {isLand,isRoad,JUNIPER_TRAFFIC_ROUTES,FROSTPINE_TRAFFIC_ROUTES,INTERISLAND_TRAFFIC_ROUTE,vehicleHitsBuilding} from './world.js';
 import {roundRoad} from './road-curves.js';
 import {separation} from './pursuit.js';
 
 const paths=[
-  [...routeWaypoints[1].slice(1,12),[1770,1550]],
-  [[1770,2390],[1770,2820],[1770,3490],...routeWaypoints[7].slice(1,4),
-    ...routeWaypoints[8].slice(0,-1).reverse(),[2540,2390],[1770,2390]],
-  routeWaypoints[10].slice(2),
-  [[6800,3620],[7350,3620],[7990,3620],[7990,3050],[7350,3050],[6800,3050],[6800,3620]],
-  [...routeWaypoints[18].slice(2,9),...routeWaypoints[19].slice(0,-1).reverse()],
-  [[5050,7000],[5050,7420],...routeWaypoints[21].slice(3),[6220,6710],[5650,6880],[5050,7000]],
-  [[3800,4770],[3800,5050],[3800,6060],[3800,6410],[4060,6760],[4430,6970],
-    [5050,7000],[5650,6880],[6220,6710],[6810,6670],[7300,6390],[7300,6060],
-    [7300,4980],[7300,4750],[7350,4540],[7530,4240],[6800,4140],[6560,4300],
-    [6100,4300],[4780,4300],[4640,4300],[4570,4220],[4530,4090],[4250,3970],
-    [3880,4010],[3500,4270],[3650,4540],[3800,4770]]
+  ...JUNIPER_TRAFFIC_ROUTES,
+  COPPER_ROUTES[1],
+  [...COPPER_NORTH_EDGE.slice(3),...COPPER_EAST_EDGE],
+  ...FROSTPINE_TRAFFIC_ROUTES,
+  INTERISLAND_TRAFFIC_ROUTE
 ];
 
 function makeLoop(points){
@@ -43,21 +39,59 @@ function lanePose(loop,position,direction,laneOffset=16){
   return {x:point.x-Math.sin(angle)*laneOffset,y:point.y+Math.cos(angle)*laneOffset,angle};
 }
 
-export function createTraffic(){
-  const cars=[];
-  for(const [routeIndex,path] of paths.entries()){
-    const loop=makeLoop(roundRoad(path,true));
-    const count=[6,3,5,4,4,3,5][routeIndex];
+const cityWest=CITY.x,cityEast=Math.max(...CITY_DISTRICTS.map(district=>district.x));
+const cityNorth=Math.min(...CITY_DISTRICTS.map(district=>district.y));
+const citySouth=Math.max(...CITY_DISTRICTS.map(district=>district.y));
+const cityPaths=[
+  [[cityWest,cityNorth],[cityEast,cityNorth],[cityEast,CITY.y],[cityWest,CITY.y]],
+  [[cityEast,CITY.y],[cityEast,citySouth],[cityWest,citySouth],[cityWest,CITY.y]],
+  [[cityWest,citySouth],[cityWest,cityNorth],[cityEast,cityNorth],[cityEast,citySouth]]
+];
+
+const copperPaths=COPPER_THROUGH_AVENUES.map((avenue,i)=>{
+  const entry=COPPER_DISTRICT_ENTRIES[i*2],exit=COPPER_DISTRICT_ENTRIES[i*2+1];
+  const returnRoad=[
+    [COPPER_JUNCTION,[COPPER_GRID.west,COPPER_GRID.middle]],
+    COPPER_NORTH_EDGE.slice(3).reverse(),
+    [...COPPER_SOUTH_EDGE].reverse()
+  ][i];
+  return [...entry.slice(0,-1),...avenue,...exit.slice(1),...returnRoad];
+});
+
+function populateTraffic(routes,counts,cars,city,copper=false){
+  const local=city||copper;
+  let civilianIndex=local?3:0;
+  for(const [routeIndex,path] of routes.entries()){
+    let cornerTrim=copperCornerTrim;
+    if(path===JUNIPER_TRAFFIC_ROUTES[0])cornerTrim=()=>170;
+    if(path===JUNIPER_TRAFFIC_ROUTES[1])cornerTrim=()=>45;
+    const loop=makeLoop(roundRoad(path,true,cornerTrim));
+    const count=counts[routeIndex];
     for(let i=0;i<count;i++){
       const direction=i%2===0?1:-1;
       const progress=loop.total*(i+.32)/count;
       const pose=lanePose(loop,progress,direction);
       if(cars.some(other=>near(other,pose,45)&&separation(pose,other).distance<8))continue;
-      const police=i===0&&[0,2,4].includes(routeIndex);
-      cars.push({...pose,loop,progress,direction,police,laneOffset:16,speed:0,cruise:70+(routeIndex*11+i*17)%47,
-        shiftX:0,shiftY:0,pushX:0,pushY:0,accelerationDelay:0,stallTime:0,backoff:0,nextBackoff:1.4,model:police?0:(routeIndex*2+i+1)%5,traffic:true,wheelSpin:0,braking:false});
+      const police=!local&&i===0&&[0,3,5].includes(routeIndex);
+      const model=police?0:civilianIndex++%CARS.length;
+      if(local&&(!isRoad(pose.x,pose.y)||vehicleHitsBuilding({...pose,model})))continue;
+      cars.push({...pose,loop,progress,direction,police,city,laneOffset:16,speed:0,
+        cruise:local?57+(routeIndex*11+i*17)%27:70+(routeIndex*11+i*17)%47,
+        shiftX:0,shiftY:0,pushX:0,pushY:0,accelerationDelay:0,stallTime:0,backoff:0,nextBackoff:1.4,
+        model,copper,traffic:true,wheelSpin:0,braking:false});
     }
   }
+}
+
+export function addCityTraffic(cars){
+  populateTraffic(cityPaths,[8,8,10],cars,true);
+}
+
+export function createTraffic(includeCity=false){
+  const cars=[];
+  populateTraffic(paths,[10,6,8,7,6,6,5,8],cars,false);
+  populateTraffic(copperPaths,[10,10,10],cars,false,true);
+  if(includeCity)addCityTraffic(cars);
   return cars;
 }
 
@@ -65,7 +99,7 @@ function near(a,b,range){
   return Math.abs(a.x-b.x)<range&&Math.abs(a.y-b.y)<range;
 }
 
-export function trafficContact(a,b){
+function trafficContact(a,b){
   return near(a,b,45)&&separation(a,b).distance<0;
 }
 
